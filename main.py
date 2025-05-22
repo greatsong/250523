@@ -68,13 +68,31 @@ st.markdown("""
 @st.cache_data
 def load_data():
     # CSV 파일 읽기
-    df = pd.read_csv('0519.csv')
+    df = pd.read_csv('0519IT정보 교양서 검토위원을 모십니다.csv')
     
     # 컬럼명 정리
     df.columns = df.columns.str.strip()
     
-    # 날짜 형식 변환
-    df['타임스탬프'] = pd.to_datetime(df['타임스탬프'])
+    # 날짜 형식 변환 - 한국어 날짜 형식 처리
+    def parse_korean_datetime(date_str):
+        try:
+            # "2025/05/19 8:03:05 오전 GMT+9" 형식 처리
+            date_str = str(date_str)
+            # GMT+9 제거
+            date_str = date_str.replace(' GMT+9', '')
+            # 오전/오후 처리
+            if '오전' in date_str:
+                date_str = date_str.replace(' 오전', ' AM')
+            elif '오후' in date_str:
+                date_str = date_str.replace(' 오후', ' PM')
+            
+            # 날짜 파싱
+            return pd.to_datetime(date_str, format='%Y/%m/%d %I:%M:%S %p')
+        except:
+            # 파싱 실패시 현재 시간 반환
+            return pd.Timestamp.now()
+    
+    df['타임스탬프'] = df['타임스탬프'].apply(parse_korean_datetime)
     
     # 전화번호 형식 통일
     df['핸드폰 번호'] = df['핸드폰 번호'].astype(str).apply(lambda x: format_phone(x))
@@ -88,6 +106,8 @@ def format_phone(phone):
         return f"{phone[:3]}-{phone[3:7]}-{phone[7:]}"
     elif len(phone) == 10:
         return f"{phone[:3]}-{phone[3:6]}-{phone[6:]}"
+    elif len(phone) == 13 and phone.startswith('8210'):  # 국제번호 형식
+        return f"+82-{phone[4:6]}-{phone[6:10]}-{phone[10:]}"
     return phone
 
 def mask_sensitive_info(text, info_type='email'):
@@ -116,17 +136,67 @@ def main():
     # 헤더
     st.markdown('<h1 class="main-header">📚 IT정보 교양서 검토위원 관리 시스템</h1>', unsafe_allow_html=True)
     
+    # 파일 업로드 옵션 추가
+    uploaded_file = st.file_uploader("CSV 파일을 업로드하세요", type=['csv'])
+    
     # 데이터 로드
     try:
-        df = load_data()
+        if uploaded_file is not None:
+            # 업로드된 파일 사용
+            df = pd.read_csv(uploaded_file)
+            
+            # 컬럼명 정리
+            df.columns = df.columns.str.strip()
+            
+            # 날짜 형식 변환 - 한국어 날짜 형식 처리
+            def parse_korean_datetime(date_str):
+                try:
+                    # "2025/05/19 8:03:05 오전 GMT+9" 형식 처리
+                    date_str = str(date_str)
+                    # GMT+9 제거
+                    date_str = date_str.replace(' GMT+9', '')
+                    # 오전/오후 처리
+                    if '오전' in date_str:
+                        date_str = date_str.replace(' 오전', ' AM')
+                    elif '오후' in date_str:
+                        date_str = date_str.replace(' 오후', ' PM')
+                    
+                    # 날짜 파싱
+                    return pd.to_datetime(date_str, format='%Y/%m/%d %I:%M:%S %p')
+                except:
+                    # 파싱 실패시 현재 시간 반환
+                    return pd.Timestamp.now()
+            
+            df['타임스탬프'] = df['타임스탬프'].apply(parse_korean_datetime)
+            
+            # 전화번호 형식 통일
+            df['핸드폰 번호'] = df['핸드폰 번호'].astype(str).apply(lambda x: format_phone(x))
+        else:
+            # 기본 파일 경로에서 로드 시도
+            df = load_data()
     except Exception as e:
         st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
-        st.info("CSV 파일이 같은 디렉토리에 있는지 확인해주세요.")
+        st.info("CSV 파일을 업로드하거나 '0519IT정보 교양서 검토위원을 모십니다.csv' 파일이 같은 디렉토리에 있는지 확인해주세요.")
+        
+        # 샘플 데이터 구조 표시
+        st.markdown("### 📋 필요한 CSV 형식:")
+        st.code("""
+타임스탬프, 성함, 이메일주소, 근무하시는 학교, 핸드폰 번호, 주소(책 받으실 주소를 적어주세요), 검토단 지원 동기, 유입 경로(어떤 플랫폼을 통해 들어오게 되셨나요?), 작성하신 개인정보는 상품 발송의 목적으로만 사용됩니다. 사용 후 폐기됩니다. 개인정보 이용에 동의하십니까?
+        """)
         return
     
     # 사이드바
     with st.sidebar:
         st.image("https://via.placeholder.com/300x100/3498db/ffffff?text=IT+정보+교양서", use_column_width=True)
+        
+        # 데이터 요약 정보
+        st.markdown("### 📊 데이터 요약")
+        st.info(f"""
+        - 전체 지원자: {len(df)}명
+        - 데이터 기간: {df['타임스탬프'].min().strftime('%Y-%m-%d')} ~ {df['타임스탬프'].max().strftime('%Y-%m-%d')}
+        - 참여 학교: {df['근무하시는 학교'].nunique()}개
+        """)
+        
         st.markdown("### 🔍 필터링 옵션")
         
         # 학교 필터
