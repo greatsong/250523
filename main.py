@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 # 커스텀 CSS
-st.markdown("""ㅈ
+st.markdown("""
 <style>
     .main-header {
         font-size: 2.5rem;
