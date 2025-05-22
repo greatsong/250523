@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 # 커스텀 CSS
-st.markdown("""
+st.markdown("""ㅈ
 <style>
     .main-header {
         font-size: 2.5rem;
@@ -68,7 +68,7 @@ st.markdown("""
 @st.cache_data
 def load_data():
     # CSV 파일 읽기
-    df = pd.read_csv('0519IT정보 교양서 검토위원을 모십니다.csv')
+    df = pd.read_csv('0519.csv')
     
     # 컬럼명 정리
     df.columns = df.columns.str.strip()
