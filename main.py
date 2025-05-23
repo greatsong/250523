@@ -4,14 +4,20 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import re
+import hashlib
+from collections import Counter
+import numpy as np
 
 # 페이지 설정
 st.set_page_config(
-    page_title="IT정보 교양서 검토위원 관리 시스템",
-    page_icon="📚",
+    page_title="스마트 설문 분석 시스템",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# 비밀번호 설정
+CORRECT_PASSWORD = "greatsong"
 
 # 커스텀 CSS
 st.markdown("""
@@ -19,511 +25,764 @@ st.markdown("""
     .main-header {
         font-size: 2.5rem;
         font-weight: 700;
-        color: #1f77b4;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
         text-align: center;
         margin-bottom: 2rem;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+    }
+    .column-config {
+        background-color: #f7f9fc;
+        padding: 1rem;
+        border-radius: 10px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #667eea;
     }
     .metric-card {
-        background-color: #f0f8ff;
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
         padding: 1.5rem;
-        border-radius: 10px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        border-radius: 15px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         text-align: center;
-        transition: transform 0.3s ease;
+        transition: all 0.3s ease;
     }
     .metric-card:hover {
         transform: translateY(-5px);
-        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.15);
     }
     .section-header {
         font-size: 1.8rem;
         font-weight: 600;
-        color: #2c3e50;
-        margin-top: 2rem;
-        margin-bottom: 1rem;
-        border-bottom: 3px solid #3498db;
+        color: #2d3748;
+        margin: 2rem 0 1rem 0;
         padding-bottom: 0.5rem;
+        border-bottom: 3px solid #667eea;
     }
     .info-box {
-        background-color: #e8f4f8;
-        padding: 1rem;
-        border-radius: 8px;
-        border-left: 4px solid #3498db;
+        background-color: #e9ecef;
+        padding: 1.2rem;
+        border-radius: 10px;
         margin: 1rem 0;
+        border-left: 4px solid #764ba2;
     }
     .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
+        gap: 10px;
+        background-color: #f7f9fc;
+        padding: 10px;
+        border-radius: 10px;
     }
     .stTabs [data-baseweb="tab"] {
-        background-color: #f0f8ff;
+        background-color: white;
         border-radius: 8px;
-        padding: 0.5rem 1rem;
-        font-weight: 500;
+        padding: 0.5rem 1.5rem;
+        font-weight: 600;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }
+    .password-container {
+        max-width: 400px;
+        margin: 0 auto;
+        padding: 2rem;
+        background: white;
+        border-radius: 15px;
+        box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        margin-top: 5rem;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# 데이터 로드 함수
-@st.cache_data
-def load_data():
-    # CSV 파일 읽기
-    df = pd.read_csv('0519.csv')
-    
-    # 컬럼명 정리
-    df.columns = df.columns.str.strip()
-    
-    # 날짜 형식 변환 - 한국어 날짜 형식 처리
-    def parse_korean_datetime(date_str):
-        try:
-            # "2025/05/19 8:03:05 오전 GMT+9" 형식 처리
-            date_str = str(date_str)
-            # GMT+9 제거
-            date_str = date_str.replace(' GMT+9', '')
-            # 오전/오후 처리
-            if '오전' in date_str:
-                date_str = date_str.replace(' 오전', ' AM')
-            elif '오후' in date_str:
-                date_str = date_str.replace(' 오후', ' PM')
-            
-            # 날짜 파싱
-            return pd.to_datetime(date_str, format='%Y/%m/%d %I:%M:%S %p')
-        except:
-            # 파싱 실패시 현재 시간 반환
-            return pd.Timestamp.now()
-    
-    df['타임스탬프'] = df['타임스탬프'].apply(parse_korean_datetime)
-    
-    # 전화번호 형식 통일
-    df['핸드폰 번호'] = df['핸드폰 번호'].astype(str).apply(lambda x: format_phone(x))
-    
-    return df
+# 컬럼 타입 정의
+COLUMN_TYPES = {
+    "timestamp": "타임스탬프 (응답 시간)",
+    "text_short": "단답형 텍스트",
+    "text_long": "장문형 텍스트",
+    "email": "이메일 주소",
+    "phone": "전화번호",
+    "name": "이름",
+    "student_id": "학번/사번",
+    "single_choice": "단일 선택 (라디오)",
+    "multiple_choice": "다중 선택 (체크박스)",
+    "linear_scale": "선형 척도 (1-5, 1-10 등)",
+    "numeric": "숫자",
+    "date": "날짜",
+    "time": "시간",
+    "file_upload": "파일 업로드 URL",
+    "other": "기타"
+}
 
-def format_phone(phone):
-    """전화번호 형식 통일"""
+# 세션 상태 초기화
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+if 'column_configs' not in st.session_state:
+    st.session_state.column_configs = {}
+if 'df' not in st.session_state:
+    st.session_state.df = None
+
+# 비밀번호 확인 함수
+def check_password():
+    """비밀번호 확인"""
+    if st.session_state.authenticated:
+        return True
+    
+    with st.container():
+        st.markdown('<div class="password-container">', unsafe_allow_html=True)
+        st.markdown("### 🔐 비밀번호를 입력하세요")
+        password = st.text_input("비밀번호", type="password", key="password_input")
+        
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("확인", use_container_width=True):
+                if password == CORRECT_PASSWORD:
+                    st.session_state.authenticated = True
+                    st.rerun()
+                else:
+                    st.error("비밀번호가 올바르지 않습니다.")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    return False
+
+# 데이터 마스킹 함수들
+def mask_email(email):
+    if pd.isna(email):
+        return email
+    parts = str(email).split('@')
+    if len(parts) == 2:
+        masked = parts[0][:2] + '***@' + parts[1]
+        return masked
+    return email
+
+def mask_phone(phone):
+    if pd.isna(phone):
+        return phone
     phone = re.sub(r'[^0-9]', '', str(phone))
-    if len(phone) == 11:
-        return f"{phone[:3]}-{phone[3:7]}-{phone[7:]}"
-    elif len(phone) == 10:
-        return f"{phone[:3]}-{phone[3:6]}-{phone[6:]}"
-    elif len(phone) == 13 and phone.startswith('8210'):  # 국제번호 형식
-        return f"+82-{phone[4:6]}-{phone[6:10]}-{phone[10:]}"
+    if len(phone) >= 8:
+        return phone[:3] + '-****-' + phone[-4:]
     return phone
 
-def mask_sensitive_info(text, info_type='email'):
-    """민감한 정보 마스킹"""
-    if pd.isna(text):
-        return text
+def mask_name(name):
+    if pd.isna(name):
+        return name
+    name = str(name)
+    if len(name) >= 2:
+        return name[0] + '*' * (len(name) - 1)
+    return name
+
+def mask_student_id(sid):
+    if pd.isna(sid):
+        return sid
+    sid = str(sid)
+    if len(sid) > 4:
+        return sid[:2] + '*' * (len(sid) - 4) + sid[-2:]
+    return sid
+
+# 텍스트 분석 함수
+def analyze_text_responses(series, text_type="short"):
+    """텍스트 응답 분석"""
+    texts = series.dropna()
     
-    if info_type == 'email':
-        parts = str(text).split('@')
-        if len(parts) == 2:
-            masked = parts[0][:2] + '***' + '@' + parts[1]
-            return masked
-    elif info_type == 'phone':
-        phone = str(text)
-        if len(phone) > 8:
-            return phone[:3] + '-****-' + phone[-4:]
-    elif info_type == 'name':
-        name = str(text)
-        if len(name) >= 2:
-            return name[0] + '*' * (len(name) - 1)
+    if len(texts) == 0:
+        return None
     
-    return text
+    # 기본 통계
+    stats = {
+        "total_responses": len(texts),
+        "avg_length": texts.str.len().mean(),
+        "min_length": texts.str.len().min(),
+        "max_length": texts.str.len().max()
+    }
+    
+    # 단어 빈도 분석 (한글 기준)
+    all_text = ' '.join(texts.astype(str))
+    # 한글, 영문, 숫자만 추출
+    words = re.findall(r'[가-힣]+|[a-zA-Z]+|\d+', all_text.lower())
+    
+    # 불용어 제거 (간단한 한글 불용어)
+    stopwords = {'은', '는', '이', '가', '을', '를', '의', '에', '와', '과', '도', '로', '으로', '만', '에서', '까지', '부터', '라고', '하고'}
+    words = [w for w in words if w not in stopwords and len(w) > 1]
+    
+    word_freq = Counter(words)
+    
+    return {
+        "stats": stats,
+        "word_freq": word_freq.most_common(20)
+    }
+
+# 선택형 질문 분석
+def analyze_choice_responses(series, choice_type="single"):
+    """선택형 응답 분석"""
+    if choice_type == "multiple":
+        # 다중 선택의 경우 쉼표로 분리
+        all_choices = []
+        for response in series.dropna():
+            choices = str(response).split(',')
+            all_choices.extend([c.strip() for c in choices])
+        value_counts = pd.Series(all_choices).value_counts()
+    else:
+        value_counts = series.value_counts()
+    
+    return value_counts
+
+# 시간 분석 함수
+def analyze_timestamp(series):
+    """타임스탬프 분석"""
+    # 구글 폼 날짜 형식 파싱
+    def parse_timestamp(ts):
+        try:
+            # 여러 형식 시도
+            formats = [
+                '%Y/%m/%d %I:%M:%S %p',
+                '%Y-%m-%d %H:%M:%S',
+                '%m/%d/%Y %H:%M:%S',
+                '%Y/%m/%d %H:%M:%S'
+            ]
+            
+            ts_str = str(ts).replace(' GMT+9', '').replace(' 오전', ' AM').replace(' 오후', ' PM')
+            
+            for fmt in formats:
+                try:
+                    return pd.to_datetime(ts_str, format=fmt)
+                except:
+                    continue
+            
+            # 모든 형식이 실패하면 pandas 자동 파싱
+            return pd.to_datetime(ts)
+        except:
+            return pd.NaT
+    
+    timestamps = series.apply(parse_timestamp)
+    timestamps = timestamps.dropna()
+    
+    if len(timestamps) == 0:
+        return None
+    
+    return {
+        "hourly": timestamps.dt.hour.value_counts().sort_index(),
+        "daily": timestamps.dt.date.value_counts().sort_index(),
+        "weekday": timestamps.dt.day_name().value_counts()
+    }
 
 # 메인 앱
 def main():
-    # 헤더
-    st.markdown('<h1 class="main-header">📚 IT정보 교양서 검토위원 관리 시스템</h1>', unsafe_allow_html=True)
-    
-    # 파일 업로드 옵션 추가
-    uploaded_file = st.file_uploader("CSV 파일을 업로드하세요", type=['csv'])
-    
-    # 데이터 로드
-    try:
-        if uploaded_file is not None:
-            # 업로드된 파일 사용
-            df = pd.read_csv(uploaded_file)
-            
-            # 컬럼명 정리
-            df.columns = df.columns.str.strip()
-            
-            # 날짜 형식 변환 - 한국어 날짜 형식 처리
-            def parse_korean_datetime(date_str):
-                try:
-                    # "2025/05/19 8:03:05 오전 GMT+9" 형식 처리
-                    date_str = str(date_str)
-                    # GMT+9 제거
-                    date_str = date_str.replace(' GMT+9', '')
-                    # 오전/오후 처리
-                    if '오전' in date_str:
-                        date_str = date_str.replace(' 오전', ' AM')
-                    elif '오후' in date_str:
-                        date_str = date_str.replace(' 오후', ' PM')
-                    
-                    # 날짜 파싱
-                    return pd.to_datetime(date_str, format='%Y/%m/%d %I:%M:%S %p')
-                except:
-                    # 파싱 실패시 현재 시간 반환
-                    return pd.Timestamp.now()
-            
-            df['타임스탬프'] = df['타임스탬프'].apply(parse_korean_datetime)
-            
-            # 전화번호 형식 통일
-            df['핸드폰 번호'] = df['핸드폰 번호'].astype(str).apply(lambda x: format_phone(x))
-        else:
-            # 기본 파일 경로에서 로드 시도
-            df = load_data()
-    except Exception as e:
-        st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
-        st.info("CSV 파일을 업로드하거나 '0519IT정보 교양서 검토위원을 모십니다.csv' 파일이 같은 디렉토리에 있는지 확인해주세요.")
-        
-        # 샘플 데이터 구조 표시
-        st.markdown("### 📋 필요한 CSV 형식:")
-        st.code("""
-타임스탬프, 성함, 이메일주소, 근무하시는 학교, 핸드폰 번호, 주소(책 받으실 주소를 적어주세요), 검토단 지원 동기, 유입 경로(어떤 플랫폼을 통해 들어오게 되셨나요?), 작성하신 개인정보는 상품 발송의 목적으로만 사용됩니다. 사용 후 폐기됩니다. 개인정보 이용에 동의하십니까?
-        """)
+    # 비밀번호 확인
+    if not check_password():
         return
     
-    # 사이드바
-    with st.sidebar:
-        st.image("https://via.placeholder.com/300x100/3498db/ffffff?text=IT+정보+교양서", use_column_width=True)
+    # 헤더
+    st.markdown('<h1 class="main-header">📊 스마트 설문 분석 시스템</h1>', unsafe_allow_html=True)
+    st.markdown('<p style="text-align: center; color: #718096; margin-bottom: 2rem;">Google Forms CSV 데이터를 업로드하고 각 컬럼 타입을 설정하면 자동으로 분석합니다</p>', unsafe_allow_html=True)
+    
+    # 파일 업로드
+    uploaded_file = st.file_uploader(
+        "CSV 파일을 업로드하세요",
+        type=['csv'],
+        help="Google Forms에서 다운로드한 CSV 파일을 업로드해주세요"
+    )
+    
+    if uploaded_file is not None:
+        try:
+            # 데이터 로드
+            df = pd.read_csv(uploaded_file, encoding='utf-8')
+            st.session_state.df = df
+            
+            # 성공 메시지
+            st.success(f"✅ 파일이 성공적으로 업로드되었습니다! (총 {len(df)}개 응답)")
+            
+            # 데이터 미리보기
+            with st.expander("📋 데이터 미리보기", expanded=False):
+                st.dataframe(df.head())
+            
+            # 컬럼 설정 섹션
+            st.markdown('<h2 class="section-header">⚙️ 컬럼 타입 설정</h2>', unsafe_allow_html=True)
+            st.info("각 컬럼의 데이터 타입을 선택해주세요. 타입에 따라 적절한 분석이 자동으로 수행됩니다.")
+            
+            # 컬럼 설정 UI
+            col1, col2 = st.columns([1, 1])
+            
+            for i, column in enumerate(df.columns):
+                with col1 if i % 2 == 0 else col2:
+                    with st.container():
+                        st.markdown(f'<div class="column-config">', unsafe_allow_html=True)
+                        st.markdown(f"**{column}**")
+                        
+                        # 샘플 데이터 표시
+                        sample_data = df[column].dropna().head(3).tolist()
+                        if sample_data:
+                            st.caption(f"예시: {', '.join([str(x)[:50] + '...' if len(str(x)) > 50 else str(x) for x in sample_data])}")
+                        
+                        # 타입 선택
+                        selected_type = st.selectbox(
+                            "타입 선택",
+                            options=list(COLUMN_TYPES.keys()),
+                            format_func=lambda x: COLUMN_TYPES[x],
+                            key=f"col_type_{column}"
+                        )
+                        
+                        st.session_state.column_configs[column] = selected_type
+                        st.markdown('</div>', unsafe_allow_html=True)
+            
+            # 분석 실행 버튼
+            if st.button("🚀 분석 시작", use_container_width=True, type="primary"):
+                analyze_survey_data(df, st.session_state.column_configs)
+            
+        except Exception as e:
+            st.error(f"파일을 읽는 중 오류가 발생했습니다: {str(e)}")
+            st.info("UTF-8 인코딩의 CSV 파일인지 확인해주세요.")
+
+def analyze_survey_data(df, column_configs):
+    """설문 데이터 종합 분석"""
+    
+    # 탭 생성
+    tabs = st.tabs(["📊 전체 개요", "📈 상세 분석", "🔍 텍스트 분석", "👥 응답자 분석", "📥 데이터 내보내기"])
+    
+    # 개인정보 보호 옵션
+    mask_sensitive = st.sidebar.checkbox("🔒 개인정보 마스킹", value=True)
+    
+    with tabs[0]:  # 전체 개요
+        st.markdown('<h2 class="section-header">📊 전체 개요</h2>', unsafe_allow_html=True)
         
-        # 데이터 요약 정보
-        st.markdown("### 📊 데이터 요약")
-        st.info(f"""
-        - 전체 지원자: {len(df)}명
-        - 데이터 기간: {df['타임스탬프'].min().strftime('%Y-%m-%d')} ~ {df['타임스탬프'].max().strftime('%Y-%m-%d')}
-        - 참여 학교: {df['근무하시는 학교'].nunique()}개
-        """)
-        
-        st.markdown("### 🔍 필터링 옵션")
-        
-        # 학교 필터
-        schools = ['전체'] + sorted(df['근무하시는 학교'].dropna().unique().tolist())
-        selected_school = st.selectbox("학교 선택", schools)
-        
-        # 유입 경로 필터
-        sources = ['전체'] + sorted(df['유입 경로\n(어떤 플랫폼을 통해 들어오게 되셨나요?)'].dropna().unique().tolist())
-        selected_source = st.selectbox("유입 경로 선택", sources)
-        
-        # 날짜 필터
-        date_range = st.date_input(
-            "날짜 범위",
-            value=(df['타임스탬프'].min().date(), df['타임스탬프'].max().date()),
-            max_value=datetime.now().date()
-        )
-        
-        # 민감정보 표시 옵션
-        st.markdown("### 🔒 개인정보 보호")
-        show_sensitive = st.checkbox("민감한 정보 표시", value=False)
-        
-    # 필터링 적용
-    filtered_df = df.copy()
-    
-    if selected_school != '전체':
-        filtered_df = filtered_df[filtered_df['근무하시는 학교'] == selected_school]
-    
-    if selected_source != '전체':
-        filtered_df = filtered_df[filtered_df['유입 경로\n(어떤 플랫폼을 통해 들어오게 되셨나요?)'] == selected_source]
-    
-    if len(date_range) == 2:
-        start_date = pd.Timestamp(date_range[0])
-        end_date = pd.Timestamp(date_range[1]).replace(hour=23, minute=59, second=59)
-        filtered_df = filtered_df[(filtered_df['타임스탬프'] >= start_date) & (filtered_df['타임스탬프'] <= end_date)]
-    
-    # 주요 지표
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-        st.metric("전체 지원자", f"{len(df)}명")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-        st.metric("필터링된 지원자", f"{len(filtered_df)}명")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-        st.metric("참여 학교 수", f"{df['근무하시는 학교'].nunique()}개")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col4:
-        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-        acceptance_rate = (df['작성하신 개인정보는 상품 발송의 목적으로만 사용됩니다. 사용 후 폐기됩니다. 개인정보 이용에 동의하십니까?'] == '예').sum() / len(df) * 100
-        st.metric("개인정보 동의율", f"{acceptance_rate:.1f}%")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    # 탭 구성
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 대시보드", "👥 지원자 목록", "📈 상세 분석", "💬 지원 동기 분석", "📥 데이터 내보내기"])
-    
-    with tab1:
-        st.markdown('<h2 class="section-header">📊 전체 현황 대시보드</h2>', unsafe_allow_html=True)
-        
-        col1, col2 = st.columns(2)
+        # 기본 통계
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            # 유입 경로별 분포
-            source_stats = df['유입 경로\n(어떤 플랫폼을 통해 들어오게 되셨나요?)'].value_counts()
-            fig_source = px.pie(
-                values=source_stats.values,
-                names=source_stats.index,
-                title="유입 경로별 지원자 분포",
-                color_discrete_sequence=px.colors.qualitative.Set3
-            )
-            fig_source.update_traces(textposition='inside', textinfo='percent+label')
-            st.plotly_chart(fig_source, use_container_width=True)
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("전체 응답 수", f"{len(df):,}개")
+            st.markdown('</div>', unsafe_allow_html=True)
         
         with col2:
-            # 일별 지원자 추이
-            daily_stats = df.groupby(df['타임스탬프'].dt.date).size().reset_index(name='지원자 수')
-            fig_daily = px.line(
-                daily_stats,
-                x='타임스탬프',
-                y='지원자 수',
-                title="일별 지원자 추이",
-                markers=True
-            )
-            fig_daily.update_layout(showlegend=False)
-            st.plotly_chart(fig_daily, use_container_width=True)
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("질문 수", f"{len(df.columns)}개")
+            st.markdown('</div>', unsafe_allow_html=True)
         
-        # 학교별 상위 10개
-        st.markdown("### 🏫 학교별 지원자 현황 (상위 10개)")
-        school_stats = df['근무하시는 학교'].value_counts().head(10)
-        fig_school = px.bar(
-            x=school_stats.values,
-            y=school_stats.index,
+        with col3:
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            completion_rate = (df.notna().sum().sum() / (len(df) * len(df.columns))) * 100
+            st.metric("평균 응답률", f"{completion_rate:.1f}%")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with col4:
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            # 타임스탬프 컬럼 찾기
+            timestamp_cols = [col for col, typ in column_configs.items() if typ == 'timestamp']
+            if timestamp_cols:
+                ts_col = timestamp_cols[0]
+                ts_data = analyze_timestamp(df[ts_col])
+                if ts_data:
+                    response_days = len(ts_data['daily'])
+                    st.metric("응답 기간", f"{response_days}일")
+                else:
+                    st.metric("응답 기간", "N/A")
+            else:
+                st.metric("응답 기간", "N/A")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        # 응답률 차트
+        st.markdown("### 📊 질문별 응답률")
+        response_rates = (df.notna().sum() / len(df) * 100).sort_values(ascending=True)
+        
+        fig_response = px.bar(
+            x=response_rates.values,
+            y=response_rates.index,
             orientation='h',
-            labels={'x': '지원자 수', 'y': '학교명'},
-            color=school_stats.values,
+            labels={'x': '응답률 (%)', 'y': '질문'},
+            color=response_rates.values,
             color_continuous_scale='viridis'
         )
-        fig_school.update_layout(height=400, showlegend=False)
-        st.plotly_chart(fig_school, use_container_width=True)
+        fig_response.update_layout(height=max(400, len(response_rates) * 30), showlegend=False)
+        st.plotly_chart(fig_response, use_container_width=True)
     
-    with tab2:
-        st.markdown('<h2 class="section-header">👥 지원자 목록</h2>', unsafe_allow_html=True)
-        
-        # 검색 기능
-        search_term = st.text_input("🔍 검색 (이름, 학교, 이메일)", "")
-        
-        if search_term:
-            search_df = filtered_df[
-                filtered_df['성함'].str.contains(search_term, case=False, na=False) |
-                filtered_df['근무하시는 학교'].str.contains(search_term, case=False, na=False) |
-                filtered_df['이메일주소'].str.contains(search_term, case=False, na=False)
-            ]
-        else:
-            search_df = filtered_df
-        
-        # 표시할 데이터 준비
-        display_df = search_df.copy()
-        
-        if not show_sensitive:
-            display_df['성함'] = display_df['성함'].apply(lambda x: mask_sensitive_info(x, 'name'))
-            display_df['이메일주소'] = display_df['이메일주소'].apply(lambda x: mask_sensitive_info(x, 'email'))
-            display_df['핸드폰 번호'] = display_df['핸드폰 번호'].apply(lambda x: mask_sensitive_info(x, 'phone'))
-        
-        # 컬럼 선택
-        display_columns = ['타임스탬프', '성함', '이메일주소', '근무하시는 학교', '핸드폰 번호', 
-                          '유입 경로\n(어떤 플랫폼을 통해 들어오게 되셨나요?)']
-        
-        # 데이터 표시
-        st.dataframe(
-            display_df[display_columns].sort_values('타임스탬프', ascending=False),
-            use_container_width=True,
-            height=500
-        )
-        
-        st.info(f"총 {len(search_df)}명의 지원자가 검색되었습니다.")
-    
-    with tab3:
+    with tabs[1]:  # 상세 분석
         st.markdown('<h2 class="section-header">📈 상세 분석</h2>', unsafe_allow_html=True)
         
-        # 시간대별 분석
-        st.markdown("### ⏰ 시간대별 지원 패턴")
-        hour_stats = df.groupby(df['타임스탬프'].dt.hour).size()
-        fig_hour = px.bar(
-            x=hour_stats.index,
-            y=hour_stats.values,
-            labels={'x': '시간대', 'y': '지원자 수'},
-            title="시간대별 지원자 분포"
-        )
-        st.plotly_chart(fig_hour, use_container_width=True)
-        
-        # 지역별 분석 (주소 기반)
-        st.markdown("### 🗺️ 지역별 분포")
-        df['지역'] = df['주소(책 받으실 주소를 적어주세요)'].apply(lambda x: str(x).split()[0] if pd.notna(x) else '미입력')
-        region_stats = df['지역'].value_counts().head(10)
-        
-        fig_region = px.pie(
-            values=region_stats.values,
-            names=region_stats.index,
-            title="상위 10개 지역별 지원자 분포"
-        )
-        st.plotly_chart(fig_region, use_container_width=True)
-        
-        # 통계 요약
-        st.markdown("### 📊 통계 요약")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown('<div class="info-box">', unsafe_allow_html=True)
-            st.markdown("**유입 경로 통계**")
-            for source, count in df['유입 경로\n(어떤 플랫폼을 통해 들어오게 되셨나요?)'].value_counts().items():
-                st.write(f"- {source}: {count}명 ({count/len(df)*100:.1f}%)")
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown('<div class="info-box">', unsafe_allow_html=True)
-            st.markdown("**학교 유형 분석**")
-            school_types = {'고등학교': 0, '중학교': 0, '대학교': 0, '기타': 0}
-            for school in df['근무하시는 학교'].dropna():
-                if '고등학교' in school or '고교' in school or '고' in school:
-                    school_types['고등학교'] += 1
-                elif '중학교' in school or '중' in school:
-                    school_types['중학교'] += 1
-                elif '대학교' in school or '대학' in school:
-                    school_types['대학교'] += 1
-                else:
-                    school_types['기타'] += 1
+        # 타임스탬프 분석
+        timestamp_cols = [col for col, typ in column_configs.items() if typ == 'timestamp']
+        if timestamp_cols:
+            st.markdown("### ⏰ 시간 분석")
+            ts_col = timestamp_cols[0]
+            ts_data = analyze_timestamp(df[ts_col])
             
-            for stype, count in school_types.items():
-                if count > 0:
-                    st.write(f"- {stype}: {count}개교")
-            st.markdown('</div>', unsafe_allow_html=True)
+            if ts_data:
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # 시간대별 분포
+                    fig_hour = px.bar(
+                        x=ts_data['hourly'].index,
+                        y=ts_data['hourly'].values,
+                        labels={'x': '시간대', 'y': '응답 수'},
+                        title="시간대별 응답 분포"
+                    )
+                    st.plotly_chart(fig_hour, use_container_width=True)
+                
+                with col2:
+                    # 요일별 분포
+                    weekday_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                    weekday_korean = {'Monday': '월', 'Tuesday': '화', 'Wednesday': '수', 'Thursday': '목', 
+                                     'Friday': '금', 'Saturday': '토', 'Sunday': '일'}
+                    
+                    weekday_data = ts_data['weekday'].reindex(weekday_order, fill_value=0)
+                    
+                    fig_weekday = px.bar(
+                        x=[weekday_korean[d] for d in weekday_data.index],
+                        y=weekday_data.values,
+                        labels={'x': '요일', 'y': '응답 수'},
+                        title="요일별 응답 분포"
+                    )
+                    st.plotly_chart(fig_weekday, use_container_width=True)
+                
+                # 일별 추이
+                st.markdown("### 📅 일별 응답 추이")
+                daily_data = pd.DataFrame({
+                    '날짜': ts_data['daily'].index,
+                    '응답 수': ts_data['daily'].values
+                })
+                
+                fig_daily = px.line(
+                    daily_data,
+                    x='날짜',
+                    y='응답 수',
+                    markers=True,
+                    title="일별 응답 추이"
+                )
+                fig_daily.update_layout(showlegend=False)
+                st.plotly_chart(fig_daily, use_container_width=True)
+        
+        # 선택형 질문 분석
+        choice_cols = [col for col, typ in column_configs.items() if typ in ['single_choice', 'multiple_choice']]
+        
+        if choice_cols:
+            st.markdown("### 📊 선택형 질문 분석")
+            
+            for col in choice_cols:
+                st.markdown(f"#### {col}")
+                col_type = column_configs[col]
+                
+                value_counts = analyze_choice_responses(df[col], "multiple" if col_type == "multiple_choice" else "single")
+                
+                if len(value_counts) > 0:
+                    # 파이 차트와 바 차트를 함께 표시
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        fig_pie = px.pie(
+                            values=value_counts.values,
+                            names=value_counts.index,
+                            title="응답 분포"
+                        )
+                        st.plotly_chart(fig_pie, use_container_width=True)
+                    
+                    with col2:
+                        fig_bar = px.bar(
+                            x=value_counts.values,
+                            y=value_counts.index,
+                            orientation='h',
+                            labels={'x': '응답 수', 'y': '선택지'},
+                            title="응답 수"
+                        )
+                        st.plotly_chart(fig_bar, use_container_width=True)
+        
+        # 척도형 질문 분석
+        scale_cols = [col for col, typ in column_configs.items() if typ == 'linear_scale']
+        
+        if scale_cols:
+            st.markdown("### 📏 척도형 질문 분석")
+            
+            for col in scale_cols:
+                st.markdown(f"#### {col}")
+                
+                # 숫자로 변환
+                numeric_data = pd.to_numeric(df[col], errors='coerce').dropna()
+                
+                if len(numeric_data) > 0:
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("평균", f"{numeric_data.mean():.2f}")
+                    with col2:
+                        st.metric("중앙값", f"{numeric_data.median():.2f}")
+                    with col3:
+                        st.metric("표준편차", f"{numeric_data.std():.2f}")
+                    
+                    # 히스토그램
+                    fig_hist = px.histogram(
+                        numeric_data,
+                        nbins=int(numeric_data.max() - numeric_data.min() + 1),
+                        labels={'value': '점수', 'count': '응답 수'},
+                        title="점수 분포"
+                    )
+                    st.plotly_chart(fig_hist, use_container_width=True)
     
-    with tab4:
-        st.markdown('<h2 class="section-header">💬 지원 동기 분석</h2>', unsafe_allow_html=True)
+    with tabs[2]:  # 텍스트 분석
+        st.markdown('<h2 class="section-header">🔍 텍스트 분석</h2>', unsafe_allow_html=True)
         
-        # 지원 동기 워드 분석
-        motivations = df['검토단 지원 동기'].dropna()
+        text_cols = [col for col, typ in column_configs.items() if typ in ['text_short', 'text_long']]
         
-        # 주요 키워드 추출
-        keywords = {
-            'vpython': 0,
-            '파이썬': 0,
-            '교육': 0,
-            '수업': 0,
-            '학생': 0,
-            '교과서': 0,
-            '프로그래밍': 0,
-            '정보': 0,
-            '경험': 0,
-            '관심': 0
+        if text_cols:
+            for col in text_cols:
+                st.markdown(f"### 📝 {col}")
+                
+                text_analysis = analyze_text_responses(df[col], "long" if column_configs[col] == "text_long" else "short")
+                
+                if text_analysis:
+                    # 기본 통계
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("응답 수", f"{text_analysis['stats']['total_responses']}개")
+                    with col2:
+                        st.metric("평균 길이", f"{text_analysis['stats']['avg_length']:.0f}자")
+                    with col3:
+                        st.metric("최소 길이", f"{text_analysis['stats']['min_length']}자")
+                    with col4:
+                        st.metric("최대 길이", f"{text_analysis['stats']['max_length']}자")
+                    
+                    # 워드 클라우드 (간단한 바 차트로 대체)
+                    if text_analysis['word_freq']:
+                        st.markdown("#### 🔤 주요 키워드")
+                        
+                        words = [w[0] for w in text_analysis['word_freq'][:15]]
+                        counts = [w[1] for w in text_analysis['word_freq'][:15]]
+                        
+                        fig_words = px.bar(
+                            x=counts,
+                            y=words,
+                            orientation='h',
+                            labels={'x': '빈도', 'y': '단어'},
+                            color=counts,
+                            color_continuous_scale='blues'
+                        )
+                        st.plotly_chart(fig_words, use_container_width=True)
+                    
+                    # 샘플 응답
+                    st.markdown("#### 💬 샘플 응답")
+                    sample_responses = df[col].dropna().sample(min(5, len(df[col].dropna())))
+                    
+                    for i, response in enumerate(sample_responses, 1):
+                        with st.expander(f"응답 {i}"):
+                            st.write(response)
+        else:
+            st.info("텍스트 형식의 질문이 없습니다.")
+    
+    with tabs[3]:  # 응답자 분석
+        st.markdown('<h2 class="section-header">👥 응답자 분석</h2>', unsafe_allow_html=True)
+        
+        # 개인정보 컬럼 찾기
+        personal_cols = {
+            'email': [col for col, typ in column_configs.items() if typ == 'email'],
+            'name': [col for col, typ in column_configs.items() if typ == 'name'],
+            'phone': [col for col, typ in column_configs.items() if typ == 'phone'],
+            'student_id': [col for col, typ in column_configs.items() if typ == 'student_id']
         }
         
-        for motivation in motivations:
-            motivation_lower = str(motivation).lower()
-            for keyword in keywords:
-                if keyword in motivation_lower:
-                    keywords[keyword] += 1
-        
-        # 키워드 차트
-        st.markdown("### 🔤 주요 키워드 빈도")
-        keyword_df = pd.DataFrame(list(keywords.items()), columns=['키워드', '빈도'])
-        keyword_df = keyword_df.sort_values('빈도', ascending=True)
-        
-        fig_keywords = px.bar(
-            keyword_df,
-            x='빈도',
-            y='키워드',
-            orientation='h',
-            color='빈도',
-            color_continuous_scale='blues'
-        )
-        st.plotly_chart(fig_keywords, use_container_width=True)
-        
-        # 샘플 동기 표시
-        st.markdown("### 📝 지원 동기 샘플")
-        
-        sample_motivations = motivations.sample(min(10, len(motivations)))
-        for i, motivation in enumerate(sample_motivations, 1):
-            with st.expander(f"지원 동기 {i}"):
-                st.write(motivation)
-        
-        # 동기 길이 분석
-        st.markdown("### 📏 지원 동기 작성 분량")
-        motivation_lengths = motivations.apply(lambda x: len(str(x)))
-        
-        fig_length = px.histogram(
-            motivation_lengths,
-            nbins=20,
-            labels={'value': '글자 수', 'count': '빈도'},
-            title="지원 동기 글자 수 분포"
-        )
-        st.plotly_chart(fig_length, use_container_width=True)
+        # 응답자 정보 테이블
+        if any(personal_cols.values()):
+            st.markdown("### 📋 응답자 목록")
+            
+            # 표시할 컬럼 선택
+            display_cols = []
+            for col_type, cols in personal_cols.items():
+                display_cols.extend(cols)
+            
+            # 타임스탬프도 포함
+            if timestamp_cols:
+                display_cols = [timestamp_cols[0]] + display_cols
+            
+            # 데이터 준비
+            display_df = df[display_cols].copy()
+            
+            # 마스킹 적용
+            if mask_sensitive:
+                for col in personal_cols['email']:
+                    display_df[col] = display_df[col].apply(mask_email)
+                for col in personal_cols['name']:
+                    display_df[col] = display_df[col].apply(mask_name)
+                for col in personal_cols['phone']:
+                    display_df[col] = display_df[col].apply(mask_phone)
+                for col in personal_cols['student_id']:
+                    display_df[col] = display_df[col].apply(mask_student_id)
+            
+            # 검색 기능
+            search_term = st.text_input("🔍 검색", placeholder="이름, 이메일 등으로 검색")
+            
+            if search_term:
+                # 마스킹 전 데이터에서 검색
+                mask = pd.Series([False] * len(df))
+                for col in display_cols:
+                    mask |= df[col].astype(str).str.contains(search_term, case=False, na=False)
+                filtered_df = display_df[mask]
+            else:
+                filtered_df = display_df
+            
+            st.dataframe(filtered_df, use_container_width=True, height=400)
+            st.caption(f"총 {len(filtered_df)}명의 응답자")
+            
+        # 중복 응답 체크
+        if personal_cols['email']:
+            st.markdown("### 🔍 중복 응답 체크")
+            email_col = personal_cols['email'][0]
+            
+            duplicates = df[email_col].value_counts()
+            duplicates = duplicates[duplicates > 1]
+            
+            if len(duplicates) > 0:
+                st.warning(f"⚠️ {len(duplicates)}개의 이메일에서 중복 응답이 발견되었습니다.")
+                
+                duplicate_df = pd.DataFrame({
+                    '이메일': duplicates.index,
+                    '응답 수': duplicates.values
+                })
+                
+                if mask_sensitive:
+                    duplicate_df['이메일'] = duplicate_df['이메일'].apply(mask_email)
+                
+                st.dataframe(duplicate_df, use_container_width=True)
+            else:
+                st.success("✅ 중복 응답이 없습니다.")
     
-    with tab5:
+    with tabs[4]:  # 데이터 내보내기
         st.markdown('<h2 class="section-header">📥 데이터 내보내기</h2>', unsafe_allow_html=True)
         
+        # 내보내기 옵션
         st.markdown("### 📋 내보내기 옵션")
         
-        # 내보낼 데이터 선택
-        export_option = st.radio(
-            "내보낼 데이터 선택",
-            ["현재 필터링된 데이터", "전체 데이터"]
+        export_format = st.radio(
+            "내보낼 형식 선택",
+            ["원본 데이터 (CSV)", "분석 보고서 (텍스트)", "익명화된 데이터 (CSV)"]
         )
         
-        export_df = filtered_df if export_option == "현재 필터링된 데이터" else df
+        if export_format == "원본 데이터 (CSV)":
+            csv = df.to_csv(index=False, encoding='utf-8-sig')
+            st.download_button(
+                label="📥 CSV 다운로드",
+                data=csv,
+                file_name=f'survey_data_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
+                mime='text/csv'
+            )
         
-        # 민감정보 처리
-        mask_option = st.checkbox("민감한 정보 마스킹하여 내보내기", value=True)
-        
-        if mask_option:
-            export_df = export_df.copy()
-            export_df['성함'] = export_df['성함'].apply(lambda x: mask_sensitive_info(x, 'name'))
-            export_df['이메일주소'] = export_df['이메일주소'].apply(lambda x: mask_sensitive_info(x, 'email'))
-            export_df['핸드폰 번호'] = export_df['핸드폰 번호'].apply(lambda x: mask_sensitive_info(x, 'phone'))
-        
-        # CSV 다운로드
-        csv = export_df.to_csv(index=False, encoding='utf-8-sig')
-        st.download_button(
-            label="📥 CSV 파일 다운로드",
-            data=csv,
-            file_name=f'검토위원_명단_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
-            mime='text/csv'
-        )
-        
-        # 통계 보고서
-        st.markdown("### 📊 통계 보고서 생성")
-        
-        if st.button("보고서 생성"):
-            report = f"""
-# IT정보 교양서 검토위원 모집 결과 보고서
-
-생성일시: {datetime.now().strftime("%Y년 %m월 %d일 %H:%M")}
-
-## 1. 전체 현황
-- 총 지원자 수: {len(df)}명
-- 모집 기간: {df['타임스탬프'].min().strftime("%Y-%m-%d")} ~ {df['타임스탬프'].max().strftime("%Y-%m-%d")}
-- 참여 학교 수: {df['근무하시는 학교'].nunique()}개
-
-## 2. 유입 경로별 현황
-{df['유입 경로\n(어떤 플랫폼을 통해 들어오게 되셨나요?)'].value_counts().to_string()}
-
-## 3. 상위 10개 학교
-{df['근무하시는 학교'].value_counts().head(10).to_string()}
-
-## 4. 개인정보 동의율
-- 동의: {(df['작성하신 개인정보는 상품 발송의 목적으로만 사용됩니다. 사용 후 폐기됩니다. 개인정보 이용에 동의하십니까?'] == '예').sum()}명
-- 동의율: {acceptance_rate:.1f}%
-
-## 5. 지원 동기 주요 키워드
-{pd.DataFrame(list(keywords.items()), columns=['키워드', '빈도']).sort_values('빈도', ascending=False).to_string()}
-"""
+        elif export_format == "분석 보고서 (텍스트)":
+            # 보고서 생성
+            report = generate_report(df, column_configs, text_analysis if 'text_analysis' in locals() else None)
             
             st.download_button(
-                label="📥 보고서 다운로드 (TXT)",
+                label="📥 보고서 다운로드",
                 data=report,
-                file_name=f'검토위원_모집_보고서_{datetime.now().strftime("%Y%m%d")}.txt',
+                file_name=f'survey_report_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt',
                 mime='text/plain'
             )
+        
+        else:  # 익명화된 데이터
+            anonymized_df = df.copy()
             
-            st.success("보고서가 생성되었습니다!")
+            # 개인정보 익명화
+            for col, typ in column_configs.items():
+                if typ == 'email':
+                    anonymized_df[col] = anonymized_df[col].apply(mask_email)
+                elif typ == 'name':
+                    anonymized_df[col] = anonymized_df[col].apply(mask_name)
+                elif typ == 'phone':
+                    anonymized_df[col] = anonymized_df[col].apply(mask_phone)
+                elif typ == 'student_id':
+                    anonymized_df[col] = anonymized_df[col].apply(mask_student_id)
+            
+            csv = anonymized_df.to_csv(index=False, encoding='utf-8-sig')
+            st.download_button(
+                label="📥 익명화된 CSV 다운로드",
+                data=csv,
+                file_name=f'survey_anonymized_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
+                mime='text/csv'
+            )
+        
+        # 시각화 저장
+        st.markdown("### 📊 차트 저장 팁")
+        st.info("""
+        각 차트는 오른쪽 상단의 카메라 아이콘을 클릭하여 PNG 이미지로 저장할 수 있습니다.
+        더 고화질의 이미지가 필요한 경우 SVG 형식으로 저장하려면 차트 위에서 우클릭하세요.
+        """)
+
+def generate_report(df, column_configs, text_analysis=None):
+    """분석 보고서 생성"""
+    report = f"""
+설문 분석 보고서
+================
+생성일시: {datetime.now().strftime("%Y년 %m월 %d일 %H:%M")}
+
+1. 기본 정보
+-----------
+- 전체 응답 수: {len(df)}개
+- 질문 수: {len(df.columns)}개
+- 평균 응답률: {(df.notna().sum().sum() / (len(df) * len(df.columns))) * 100:.1f}%
+
+2. 컬럼별 데이터 타입
+-------------------
+"""
+    
+    for col, typ in column_configs.items():
+        report += f"- {col}: {COLUMN_TYPES[typ]}\n"
+    
+    report += "\n3. 주요 분석 결과\n-----------------\n"
+    
+    # 선택형 질문 결과
+    choice_cols = [col for col, typ in column_configs.items() if typ in ['single_choice', 'multiple_choice']]
+    if choice_cols:
+        report += "\n선택형 질문:\n"
+        for col in choice_cols[:3]:  # 상위 3개만
+            value_counts = df[col].value_counts().head(5)
+            report += f"\n{col}:\n"
+            for val, count in value_counts.items():
+                report += f"  - {val}: {count}개 ({count/len(df)*100:.1f}%)\n"
+    
+    # 텍스트 분석 결과
+    if text_analysis:
+        report += "\n텍스트 응답 분석:\n"
+        report += f"- 평균 응답 길이: {text_analysis['stats']['avg_length']:.0f}자\n"
+        report += "- 주요 키워드: "
+        keywords = [f"{word}({count})" for word, count in text_analysis['word_freq'][:10]]
+        report += ", ".join(keywords) + "\n"
+    
+    report += "\n================\n"
+    
+    return report
+
+# 지속적 모니터링 아이디어 섹션
+def monitoring_ideas():
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 💡 지속적 모니터링 아이디어")
+    
+    with st.sidebar.expander("자동화 방안"):
+        st.markdown("""
+        **1. Google Apps Script 연동**
+        - Google Forms 응답 시 자동 알림
+        - 일정 주기로 데이터 업데이트
+        
+        **2. 대시보드 URL 공유**
+        - Streamlit Cloud 배포
+        - 고유 URL로 실시간 접근
+        
+        **3. 정기 보고서**
+        - 주간/월간 자동 리포트
+        - 이메일 자동 발송
+        
+        **4. API 확장**
+        - REST API 엔드포인트 제공
+        - 다른 시스템과 연동
+        """)
+    
+    with st.sidebar.expander("추가 기능 제안"):
+        st.markdown("""
+        **1. AI 기반 인사이트**
+        - 자동 트렌드 감지
+        - 이상치 알림
+        
+        **2. 비교 분석**
+        - 이전 설문과 비교
+        - 벤치마크 데이터
+        
+        **3. 예측 분석**
+        - 응답률 예측
+        - 완료 시간 예상
+        """)
 
 # 앱 실행
 if __name__ == "__main__":
     main()
+    if st.session_state.authenticated:
+        monitoring_ideas()
