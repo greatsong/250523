@@ -19,8 +19,8 @@ st.set_page_config(
 # 비밀번호 설정
 CORRECT_PASSWORD = "greatsong"
 
-# 커스텀 CSS
-st.markdown("""
+# CSS 스타일
+CUSTOM_CSS = """
 <style>
     .main-header {
         font-size: 2.5rem;
@@ -88,7 +88,10 @@ st.markdown("""
         margin-top: 5rem;
     }
 </style>
-""", unsafe_allow_html=True)
+"""
+
+# CSS 적용
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 # 컬럼 타입 정의
 COLUMN_TYPES = {
@@ -117,7 +120,6 @@ if 'column_configs' not in st.session_state:
 if 'df' not in st.session_state:
     st.session_state.df = None
 
-# 비밀번호 확인 함수
 def check_password():
     """비밀번호 확인"""
     if st.session_state.authenticated:
@@ -141,7 +143,6 @@ def check_password():
     
     return False
 
-# 데이터 마스킹 함수들
 def mask_email(email):
     if pd.isna(email):
         return email
@@ -175,7 +176,6 @@ def mask_student_id(sid):
         return sid[:2] + '*' * (len(sid) - 4) + sid[-2:]
     return sid
 
-# 텍스트 분석 함수
 def analyze_text_responses(series, text_type="short"):
     """텍스트 응답 분석"""
     texts = series.dropna()
@@ -207,7 +207,6 @@ def analyze_text_responses(series, text_type="short"):
         "word_freq": word_freq.most_common(20)
     }
 
-# 선택형 질문 분석
 def analyze_choice_responses(series, choice_type="single"):
     """선택형 응답 분석"""
     if choice_type == "multiple":
@@ -222,10 +221,8 @@ def analyze_choice_responses(series, choice_type="single"):
     
     return value_counts
 
-# 시간 분석 함수
 def analyze_timestamp(series):
     """타임스탬프 분석"""
-    # 구글 폼 날짜 형식 파싱
     def parse_timestamp(ts):
         try:
             # 여러 형식 시도
@@ -261,7 +258,52 @@ def analyze_timestamp(series):
         "weekday": timestamps.dt.day_name().value_counts()
     }
 
-# 메인 앱
+def generate_report(df, column_configs, text_analyses):
+    """분석 보고서 생성"""
+    report = f"""설문 분석 보고서
+================
+생성일시: {datetime.now().strftime("%Y년 %m월 %d일 %H:%M")}
+
+1. 기본 정보
+-----------
+- 전체 응답 수: {len(df)}개
+- 질문 수: {len(df.columns)}개
+- 평균 응답률: {(df.notna().sum().sum() / (len(df) * len(df.columns))) * 100:.1f}%
+
+2. 컬럼별 데이터 타입
+-------------------
+"""
+    
+    for col, typ in column_configs.items():
+        report += f"- {col}: {COLUMN_TYPES[typ]}\n"
+    
+    report += "\n3. 주요 분석 결과\n-----------------\n"
+    
+    # 선택형 질문 결과
+    choice_cols = [col for col, typ in column_configs.items() if typ in ['single_choice', 'multiple_choice']]
+    if choice_cols:
+        report += "\n선택형 질문:\n"
+        for col in choice_cols[:3]:  # 상위 3개만
+            value_counts = df[col].value_counts().head(5)
+            report += f"\n{col}:\n"
+            for val, count in value_counts.items():
+                report += f"  - {val}: {count}개 ({count/len(df)*100:.1f}%)\n"
+    
+    # 텍스트 분석 결과
+    if text_analyses:
+        report += "\n텍스트 응답 분석:\n"
+        for col, analysis in text_analyses.items():
+            if analysis:
+                report += f"\n{col}:\n"
+                report += f"- 평균 응답 길이: {analysis['stats']['avg_length']:.0f}자\n"
+                report += "- 주요 키워드: "
+                keywords = [f"{word}({count})" for word, count in analysis['word_freq'][:10]]
+                report += ", ".join(keywords) + "\n"
+    
+    report += "\n================\n"
+    
+    return report
+
 def main():
     # 비밀번호 확인
     if not check_password():
@@ -307,7 +349,8 @@ def main():
                         # 샘플 데이터 표시
                         sample_data = df[column].dropna().head(3).tolist()
                         if sample_data:
-                            st.caption(f"예시: {', '.join([str(x)[:50] + '...' if len(str(x)) > 50 else str(x) for x in sample_data])}")
+                            sample_text = ', '.join([str(x)[:50] + '...' if len(str(x)) > 50 else str(x) for x in sample_data])
+                            st.caption(f"예시: {sample_text}")
                         
                         # 타입 선택
                         selected_type = st.selectbox(
@@ -515,6 +558,7 @@ def analyze_survey_data(df, column_configs):
         st.markdown('<h2 class="section-header">🔍 텍스트 분석</h2>', unsafe_allow_html=True)
         
         text_cols = [col for col, typ in column_configs.items() if typ in ['text_short', 'text_long']]
+        text_analyses = {}
         
         if text_cols:
             for col in text_cols:
@@ -523,6 +567,8 @@ def analyze_survey_data(df, column_configs):
                 text_analysis = analyze_text_responses(df[col], "long" if column_configs[col] == "text_long" else "short")
                 
                 if text_analysis:
+                    text_analyses[col] = text_analysis
+                    
                     # 기본 통계
                     col1, col2, col3, col4 = st.columns(4)
                     
@@ -561,6 +607,7 @@ def analyze_survey_data(df, column_configs):
                             st.write(response)
         else:
             st.info("텍스트 형식의 질문이 없습니다.")
+            text_analyses = {}
     
     with tabs[3]:  # 응답자 분석
         st.markdown('<h2 class="section-header">👥 응답자 분석</h2>', unsafe_allow_html=True)
@@ -583,6 +630,7 @@ def analyze_survey_data(df, column_configs):
                 display_cols.extend(cols)
             
             # 타임스탬프도 포함
+            timestamp_cols = [col for col, typ in column_configs.items() if typ == 'timestamp']
             if timestamp_cols:
                 display_cols = [timestamp_cols[0]] + display_cols
             
@@ -660,7 +708,7 @@ def analyze_survey_data(df, column_configs):
         
         elif export_format == "분석 보고서 (텍스트)":
             # 보고서 생성
-            report = generate_report(df, column_configs, text_analysis if 'text_analysis' in locals() else None)
+            report = generate_report(df, column_configs, text_analyses)
             
             st.download_button(
                 label="📥 보고서 다운로드",
@@ -698,51 +746,6 @@ def analyze_survey_data(df, column_configs):
         더 고화질의 이미지가 필요한 경우 SVG 형식으로 저장하려면 차트 위에서 우클릭하세요.
         """)
 
-def generate_report(df, column_configs, text_analysis=None):
-    """분석 보고서 생성"""
-    report = f"""
-설문 분석 보고서
-================
-생성일시: {datetime.now().strftime("%Y년 %m월 %d일 %H:%M")}
-
-1. 기본 정보
------------
-- 전체 응답 수: {len(df)}개
-- 질문 수: {len(df.columns)}개
-- 평균 응답률: {(df.notna().sum().sum() / (len(df) * len(df.columns))) * 100:.1f}%
-
-2. 컬럼별 데이터 타입
--------------------
-"""
-    
-    for col, typ in column_configs.items():
-        report += f"- {col}: {COLUMN_TYPES[typ]}\n"
-    
-    report += "\n3. 주요 분석 결과\n-----------------\n"
-    
-    # 선택형 질문 결과
-    choice_cols = [col for col, typ in column_configs.items() if typ in ['single_choice', 'multiple_choice']]
-    if choice_cols:
-        report += "\n선택형 질문:\n"
-        for col in choice_cols[:3]:  # 상위 3개만
-            value_counts = df[col].value_counts().head(5)
-            report += f"\n{col}:\n"
-            for val, count in value_counts.items():
-                report += f"  - {val}: {count}개 ({count/len(df)*100:.1f}%)\n"
-    
-    # 텍스트 분석 결과
-    if text_analysis:
-        report += "\n텍스트 응답 분석:\n"
-        report += f"- 평균 응답 길이: {text_analysis['stats']['avg_length']:.0f}자\n"
-        report += "- 주요 키워드: "
-        keywords = [f"{word}({count})" for word, count in text_analysis['word_freq'][:10]]
-        report += ", ".join(keywords) + "\n"
-    
-    report += "\n================\n"
-    
-    return report
-
-# 지속적 모니터링 아이디어 섹션
 def monitoring_ideas():
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 💡 지속적 모니터링 아이디어")
@@ -781,7 +784,7 @@ def monitoring_ideas():
         - 완료 시간 예상
         """)
 
-# 앱 실행
+# 메인 실행
 if __name__ == "__main__":
     main()
     if st.session_state.authenticated:
