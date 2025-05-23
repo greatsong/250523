@@ -746,46 +746,7 @@ def analyze_survey_data(df, column_configs):
         더 고화질의 이미지가 필요한 경우 SVG 형식으로 저장하려면 차트 위에서 우클릭하세요.
         """)
 
-def monitoring_ideas():
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 💡 지속적 모니터링 아이디어")
-    
-    with st.sidebar.expander("자동화 방안"):
-        st.markdown("""
-        **1. Google Apps Script 연동**
-        - Google Forms 응답 시 자동 알림
-        - 일정 주기로 데이터 업데이트
-        
-        **2. 대시보드 URL 공유**
-        - Streamlit Cloud 배포
-        - 고유 URL로 실시간 접근
-        
-        **3. 정기 보고서**
-        - 주간/월간 자동 리포트
-        - 이메일 자동 발송
-        
-        **4. API 확장**
-        - REST API 엔드포인트 제공
-        - 다른 시스템과 연동
-        """)
-    
-    with st.sidebar.expander("추가 기능 제안"):
-        st.markdown("""
-        **1. AI 기반 인사이트**
-        - 자동 트렌드 감지
-        - 이상치 알림
-        
-        **2. 비교 분석**
-        - 이전 설문과 비교
-        - 벤치마크 데이터
-        
-        **3. 예측 분석**
-        - 응답률 예측
-        - 완료 시간 예상
-        """)
 
 # 메인 실행
 if __name__ == "__main__":
     main()
-    if st.session_state.authenticated:
-        monitoring_ideas()
