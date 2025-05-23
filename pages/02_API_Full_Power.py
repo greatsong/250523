@@ -6,7 +6,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import koreanize_matplotlib                     # 꼭 포함
+import koreanize_matplotlib
 from datetime import datetime
 import re, textwrap, tempfile, urllib.request, os, json, asyncio
 from collections import Counter
@@ -64,23 +64,28 @@ st.markdown(
 ###############################################################################
 #                        세션 상태 초기 (토큰·클라이언트)                      #
 ###############################################################################
+def get_default_openai_key():
+    # 사이드바에서 입력값이 있으면 사용, 없으면 secret, 둘 다 없으면 ""
+    return st.session_state.get("openai_key") or st.secrets.get("openai_api_key", "")
+
 for k, v in {
     "authenticated": False,
     "column_types": {},
     "df": None,
     "token_used": 0,
-    "openai_key": st.secrets.get("openai_api_key", "")
+    "openai_key": "",  # 사용자 입력 우선, 없으면 secret에서 get_default_openai_key로 보충
 }.items():
     st.session_state.setdefault(k, v)
 
 def get_client(async_mode=False):
-    key = st.session_state.openai_key
-    return (AsyncOpenAI if async_mode else OpenAI)(api_key=key) if key else None
+    key = get_default_openai_key()
+    if not key: return None
+    return (AsyncOpenAI if async_mode else OpenAI)(api_key=key)
 
 ###############################################################################
 #                               비밀번호 체크                                  #
 ###############################################################################
-CORRECT_PASSWORD = "greatsong"
+CORRECT_PASSWORD = "zzolab"
 def check_password() -> bool:
     if st.session_state.authenticated: return True
     st.markdown('<div class="password-box">', unsafe_allow_html=True)
@@ -98,8 +103,9 @@ def check_password() -> bool:
 #                              GPT 유틸리티                                   #
 ###############################################################################
 @st.cache_data(show_spinner=False)
-def gpt_guess_types(cols:list[str], key:str):
-    client = OpenAI(api_key=key)
+def gpt_guess_types(cols:list[str]):
+    client = get_client()
+    if client is None: return {}
     prompt = "\n".join(f"- {c}" for c in cols)
     sysmsg = ("각 문항이 어떤 데이터 타입인지 다음 셋 중 하나로 추정해 JSON으로 답하세요: "
               "timestamp / text_short / text_long / single_choice / multiple_choice / numeric / email / phone / name / student_id / other")
@@ -115,8 +121,9 @@ def gpt_guess_types(cols:list[str], key:str):
     except Exception:
         return {}
 
-def stream_longtext_summary(texts:str, key:str):
-    client = OpenAI(api_key=key)
+def stream_longtext_summary(texts:str):
+    client = get_client()
+    if client is None: return
     sys = "너는 뛰어난 한국어 데이터 분석가다. 주요 주제 3-5개와 각 주제 대표문장을 출력해라."
     with st.spinner("🧠 GPT 요약 중…"):
         for chunk in client.chat.completions.create(
@@ -165,8 +172,9 @@ def create_wordcloud(freq):
 #                           Embedding & Cluster                               #
 ###############################################################################
 @st.cache_data(show_spinner=False)
-def embed_texts(texts:list[str], key:str):
-    client = OpenAI(api_key=key)
+def embed_texts(texts:list[str]):
+    client = get_client()
+    if client is None: return np.zeros((len(texts), 384))
     embs = client.embeddings.create(model="text-embedding-3-small", input=texts).data
     vec  = np.array([e.embedding for e in embs])
     return vec
@@ -184,8 +192,9 @@ def plot_clusters(vecs:np.ndarray, texts:list[str]):
 def regex_mask(pattern, repl, s):
     return re.sub(pattern, repl, s) if pd.notna(s) else s
 
-def gpt_mask(texts:list[str], key:str):
-    client = OpenAI(api_key=key)
+def gpt_mask(texts:list[str]):
+    client = get_client()
+    if client is None: return texts
     sys = ("다음 문자열 리스트에서 개인정보(이름·전화·이메일·학번 등)를 발견하면 "
            "각 원소를 *** 로 마스킹하고, 개인정보가 없으면 그대로 두어라. "
            "JSON 리스트로만 결과를 출력해라.")
@@ -201,8 +210,9 @@ def gpt_mask(texts:list[str], key:str):
 ###############################################################################
 #                               보고서 GPT 생성                                #
 ###############################################################################
-def gpt_make_report(meta:str, key:str, style:str):
-    client = OpenAI(api_key=key)
+def gpt_make_report(meta:str, style:str):
+    client = get_client()
+    if client is None: return ""
     prompt = f"""
     당신은 데이터 분석 보고서 전문가입니다. 원하는 스타일: {style}
     다음 메타데이터를 보고 알차고 간결한 보고서를 작성하세요.
@@ -222,10 +232,11 @@ def gpt_make_report(meta:str, key:str, style:str):
 ###############################################################################
 QA_SYS = "너는 데이터 분석 보조 AI다. 사용자의 질문을 한국어로 이해하고 DataFrame에 기반한 대답을 해라."
 
-def chat_with_df(df:pd.DataFrame, query:str, key:str):
+def chat_with_df(df:pd.DataFrame, query:str):
+    client = get_client()
+    if client is None: return "API 키가 필요합니다."
     sample = df.head(50).to_json(orient="split", force_ascii=False)
     prompt = f"DataFrame 샘플:```json\n{sample}\n```\n질문: {query}"
-    client = OpenAI(api_key=key)
     res = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role":"system","content":QA_SYS},
@@ -243,8 +254,8 @@ def main():
     st.sidebar.text_input("sk-...", type="password",
                           key="openai_key",
                           placeholder="환경변수 또는 여기 입력")
-    client = get_client()
-    if client is None:
+    openai_key = get_default_openai_key()
+    if not openai_key:
         st.sidebar.warning("API 키를 입력하세요! (일부 기능 제한)")
     st.sidebar.markdown(f"**토큰 사용량**: {st.session_state.token_used:,}")
 
@@ -264,9 +275,9 @@ def main():
     type_list = ["timestamp","text_short","text_long","single_choice",
                  "multiple_choice","numeric","email","phone","name",
                  "student_id","other"]
-    if client:
+    if openai_key:
         with st.spinner("🧠 GPT가 컬럼 타입 추정 중..."):
-            col_types = gpt_guess_types(df.columns.tolist(), st.session_state.openai_key)
+            col_types = gpt_guess_types(df.columns.tolist())
 
     left,right = st.columns(2)
     for i,col in enumerate(df.columns):
@@ -321,12 +332,12 @@ def main():
             wc_image = create_wordcloud(res["freq"])
             if wc_image: st.image(wc_image,use_column_width=True)
 
-            if cfg[col]=="text_long" and client:
+            if cfg[col]=="text_long" and openai_key:
                 with st.expander("💡 GPT 주요 주제/문장"):
                     top_n = 100
                     sample = df[col].dropna().astype(str).sort_values(key=lambda s:s.str.len(),ascending=False).head(top_n)
                     joined = "\n\n".join(sample.tolist())[:12000]
-                    stream_longtext_summary(joined, st.session_state.openai_key)
+                    stream_longtext_summary(joined)
 
     # ▸ Cluster
     with tab_cluster:
@@ -334,23 +345,23 @@ def main():
         long_cols = [c for c,t in cfg.items() if t=="text_long"]
         if not long_cols:
             st.info("text_long 컬럼이 없습니다."); 
-        elif client is None:
+        elif not openai_key:
             st.warning("API 키 필요");
         else:
             col_pick = st.selectbox("임베딩 대상 컬럼", long_cols)
             texts = df[col_pick].dropna().astype(str).tolist()
-            vecs  = embed_texts(texts, st.session_state.openai_key)
+            vecs  = embed_texts(texts)
             plot_clusters(vecs, texts)
 
     # ▸ Chatbot
     with tab_chat:
         st.markdown('<h2 class="section-header">💬 데이터 챗봇</h2>', unsafe_allow_html=True)
-        if client is None:
+        if not openai_key:
             st.warning("API 키 필요")
         else:
             query = st.text_input("무엇이 궁금한가요? (예: '응답자의 평균 연령은?')")
             if st.button("답변 요청") and query:
-                answer = chat_with_df(df, query, st.session_state.openai_key)
+                answer = chat_with_df(df, query)
                 st.info(answer)
 
     # ▸ Export
@@ -368,15 +379,15 @@ def main():
                                  for c,res in txt_results.items()}
             }
             if st.button("📝 GPT 보고서 생성"):
-                report = gpt_make_report(json.dumps(meta,ensure_ascii=False), st.session_state.openai_key, style)
+                report = gpt_make_report(json.dumps(meta,ensure_ascii=False), style)
                 st.download_button("📥 보고서 다운로드",report,file_name=f"survey_report_{datetime.now():%Y%m%d_%H%M%S}.txt",mime="text/plain")
         else:                                  # 익명
             anon = df.copy()
-            if client:                         # GPT 마스킹 (간단 샘플)
+            if openai_key:                         # GPT 마스킹 (간단 샘플)
                 for col,t in cfg.items():
                     if t in {"name","email","phone","student_id"}:
                         batch = anon[col].fillna("").astype(str).tolist()
-                        masked = gpt_mask(batch, st.session_state.openai_key)
+                        masked = gpt_mask(batch)
                         anon[col] = masked
             csv = anon.to_csv(index=False,encoding="utf-8-sig")
             st.download_button("📥 익명 CSV 다운로드",csv,file_name=f"survey_anon_{datetime.now():%Y%m%d_%H%M%S}.csv",mime="text/csv")
