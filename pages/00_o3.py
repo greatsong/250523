@@ -29,7 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-CORRECT_PASSWORD = "greatsong"
+CORRECT_PASSWORD = "zzolab"
 
 # --- CSS ---------------------------------------------------------------------
 CUSTOM_CSS = """
