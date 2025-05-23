@@ -107,8 +107,28 @@ def gpt_guess_types(cols:list[str]):
     client = get_client()
     if client is None: return {}
     prompt = "\n".join(f"- {c}" for c in cols)
-    sysmsg = ("각 문항이 어떤 데이터 타입인지 다음 셋 중 하나로 추정해 JSON으로 답하세요: "
-              "timestamp / text_short / text_long / single_choice / multiple_choice / numeric / email / phone / name / student_id / other")
+    sysmsg = (
+    "아래는 설문 데이터의 컬럼명(문항명) 리스트입니다. "
+    "각 문항이 어떤 데이터 타입에 해당하는지 가장 적합한 한 가지를 선택해 컬럼명:타입 쌍의 JSON 오브젝트로 답하세요.\n\n"
+    "선택 가능한 타입:\n"
+    "- timestamp: 날짜, 시간 등(예: '응답 시간', '제출일', 'Date')\n"
+    "- text_short: 짧은 주관식(예: '직업', '한 줄 소개', '성별', '거주지')\n"
+    "- text_long: 긴 주관식(예: '기억에 남는 경험', '의견을 자유롭게 작성', '건의사항')\n"
+    "- single_choice: 객관식 단일선택(예: '성별', '학년', '선호도', 'Yes/No', '지역 선택')\n"
+    "- multiple_choice: 객관식 다중선택(예: '관심 분야(중복 선택)', '희망 과목(복수 응답 가능)')\n"
+    "- numeric: 숫자/수치(예: '나이', '점수', '연령')\n"
+    "- email: 이메일 주소(예: '이메일', 'email')\n"
+    "- phone: 전화번호(예: '휴대폰 번호', '연락처')\n"
+    "- name: 이름(예: '성명', '이름')\n"
+    "- student_id: 학번/사번 등(예: '학번', 'ID')\n"
+    "- other: 위의 어느 것도 아닌 경우\n\n"
+    "아래 예시를 참고하세요:\n"
+    "예시 입력:\n- 이름\n- 성별\n- 희망과목(복수응답)\n- 자유의견\n- 제출일\n- 휴대폰 번호\n"
+    "예시 답변:\n"
+    "{\"이름\":\"name\", \"성별\":\"single_choice\", \"희망과목(복수응답)\":\"multiple_choice\", \"자유의견\":\"text_long\", \"제출일\":\"timestamp\", \"휴대폰 번호\":\"phone\"}\n\n"
+    "아래 컬럼들을 분석해 동일한 방식의 JSON으로만 답하세요. "
+    )
+
     res = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role":"system","content":sysmsg},
