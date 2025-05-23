@@ -10,7 +10,7 @@ import numpy as np
 
 # 페이지 설정
 st.set_page_config(
-    page_title="스마트 설문 분석 시스템",
+    page_title="스마트 설문 분석 시스템(by zzolab 석리송)",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
