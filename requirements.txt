@@ -3,3 +3,5 @@ kiwipiepy
 koreanize-matplotlib
 wordcloud 
 openai 
+umap-learn
+scikit-learn
