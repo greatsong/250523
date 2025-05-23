@@ -106,7 +106,7 @@ def check_password():
         if st.button("확인", use_container_width=True):
             if password == CORRECT_PASSWORD:
                 st.session_state.authenticated = True
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("비밀번호가 올바르지 않습니다.")
     st.markdown('</div>', unsafe_allow_html=True)
