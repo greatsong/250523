@@ -17,7 +17,7 @@ st.set_page_config(
 )
 
 # 비밀번호 설정
-CORRECT_PASSWORD = "greatsong"
+CORRECT_PASSWORD = "zzolab"
 
 # CSS 스타일
 CUSTOM_CSS = """
