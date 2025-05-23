@@ -1,19 +1,17 @@
-# app.py ─ Smart Survey Analysis 3.0
+# app.py ─ Smart Survey Analysis 3.0 (sample-aware)
 # author: Sukree Song ✨ with GPT-4o
-###############################################################################
-#                             기본 라이브러리                                  #
-###############################################################################
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import koreanize_matplotlib
 from datetime import datetime
-import re, textwrap, tempfile, urllib.request, os, json, asyncio
+import re, tempfile, urllib.request, os, json
 from collections import Counter
 from io import BytesIO
 from pathlib import Path
 from wordcloud import WordCloud
-from openai import OpenAI, AsyncOpenAI
+from openai import OpenAI
 import umap, numpy as np
 
 ###############################################################################
@@ -22,7 +20,7 @@ import umap, numpy as np
 DEFAULT_FONT = "Nanum Gothic"
 CANDIDATES   = [Path("assets/NanumGothic.ttf"), Path("NanumGothic.ttf")]
 FONT_PATH    = next((str(p) for p in CANDIDATES if p.exists()), None)
-if FONT_PATH is None:               # tmp 다운로드
+if FONT_PATH is None:
     url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
     tmp = Path(tempfile.gettempdir()) / "NanumGothic.ttf"
     if not tmp.exists(): urllib.request.urlretrieve(url, tmp)
@@ -65,7 +63,6 @@ st.markdown(
 #                        세션 상태 초기 (토큰·클라이언트)                      #
 ###############################################################################
 def get_default_openai_key():
-    # 사이드바에서 입력값이 있으면 사용, 없으면 secret, 둘 다 없으면 ""
     return st.session_state.get("openai_key") or st.secrets.get("openai_api_key", "")
 
 for k, v in {
@@ -73,19 +70,19 @@ for k, v in {
     "column_types": {},
     "df": None,
     "token_used": 0,
-    "openai_key": "",  # 사용자 입력 우선, 없으면 secret에서 get_default_openai_key로 보충
+    "openai_key": "",
 }.items():
     st.session_state.setdefault(k, v)
 
-def get_client(async_mode=False):
+def get_client():
     key = get_default_openai_key()
     if not key: return None
-    return (AsyncOpenAI if async_mode else OpenAI)(api_key=key)
+    return OpenAI(api_key=key)
 
 ###############################################################################
 #                               비밀번호 체크                                  #
 ###############################################################################
-CORRECT_PASSWORD = "zzolab"
+CORRECT_PASSWORD = "greatsong"
 def check_password() -> bool:
     if st.session_state.authenticated: return True
     st.markdown('<div class="password-box">', unsafe_allow_html=True)
@@ -100,54 +97,63 @@ def check_password() -> bool:
     return False
 
 ###############################################################################
-#                              GPT 유틸리티                                   #
+#                GPT 컬럼 타입 자동 분류 (샘플값 기반, head/tail)               #
 ###############################################################################
 @st.cache_data(show_spinner=False)
-def gpt_guess_types(cols: list[str]):
-    """
-    컬럼명 리스트를 받아 GPT-4o를 사용해 데이터 타입을 예측한다.
-    """
+def gpt_guess_types_with_sample(df: pd.DataFrame):
     client = get_client()
     if client is None:
         return {}
-    prompt = "\n".join(f"- {c}" for c in cols)
+    # head/tail 3개씩 (값이 없는 컬럼은 샘플 생략)
+    sample_data = {
+        col: df[col].dropna().astype(str).tolist()[:3] + df[col].dropna().astype(str).tolist()[-2:]
+        for col in df.columns
+    }
+    # 프롬프트
     sysmsg = (
-        "아래는 설문 데이터의 컬럼명(문항명) 리스트입니다. "
-        "각 문항이 어떤 데이터 타입에 해당하는지 가장 적합한 한 가지를 선택해 컬럼명:타입 쌍의 JSON 오브젝트로 답하세요. "
-        "데이터 타입은 반드시 아래 목록 중에서만 고르세요. 각 타입의 정의와 예시는 다음과 같습니다.\n\n"
-        "▶ timestamp: 날짜, 시간, 제출일, 응답일 등 (예: '응답 시간', '제출일', 'Date', '등록일', '생년월일')\n"
-        "▶ text_short: 짧은 주관식 텍스트(보통 1~15자, 예: '직업', '한 줄 소개', '성별', '거주지', '학교명', '학교급')\n"
-        "▶ text_long: 긴 주관식(수십자 이상의 의견이나 서술형, 예: '기억에 남는 경험', '의견을 자유롭게 작성', '건의사항', '하고 싶은 말', '피드백')\n"
-        "▶ single_choice: 객관식 단일선택(예: '성별', '학년', '선호도', 'Yes/No', '지역', '급식 만족도')\n"
-        "▶ multiple_choice: 객관식 복수선택(예: '관심 분야(중복 선택)', '희망 과목(복수 응답)', '참여 경로(중복 응답)')\n"
-        "▶ numeric: 숫자/수치(예: '나이', '점수', '연령', '순위', '수량', '번호')\n"
-        "▶ email: 이메일 주소(예: '이메일', 'email', 'e-mail')\n"
-        "▶ phone: 전화번호, 연락처(예: '휴대폰 번호', '전화', '연락처', '핸드폰')\n"
-        "▶ name: 이름, 성명(예: '성명', '이름', '실명', 'full name')\n"
-        "▶ student_id: 학번, 사번 등 식별번호(예: '학번', 'ID', '사번', '회원번호')\n"
-        "▶ other: 위의 유형에 모두 해당하지 않는 경우(예: 파일 업로드, 알 수 없음 등)\n\n"
-        "아래와 같이 답변 양식도 반드시 지켜주세요. (딱 한 번만, 각 컬럼명에 하나의 타입)\n"
+        "아래는 설문 데이터의 각 컬럼명과 샘플 값입니다. "
+        "각 컬럼의 실제 값을 참고하여, 컬럼의 데이터 타입을 가장 적합한 하나로 분류해 JSON 오브젝트로만 답하세요. "
+        "가능한 타입:\n"
+        "- timestamp: 날짜, 시간 등(예: '2023-05-01 13:00', '2024.5.23')\n"
+        "- text_short: 짧은 주관식(예: '서울', '학생', '남')\n"
+        "- text_long: 긴 주관식(예: '자유 의견', '상세 서술')\n"
+        "- single_choice: 객관식 단일선택(예: '남', '여', '1학년', '2학년')\n"
+        "- multiple_choice: 객관식 복수선택(예: '['수학','과학']', '수학;과학')\n"
+        "- numeric: 숫자(예: '12', '3.5', '2024')\n"
+        "- email: 이메일(예: 'abc@naver.com')\n"
+        "- phone: 전화번호(예: '010-1234-5678')\n"
+        "- name: 이름(예: '홍길동')\n"
+        "- student_id: 학번/사번 등(예: '20231234', '2024A001')\n"
+        "- other: 위의 어느 것도 아니면 other\n\n"
         "예시 입력:\n"
-        "- 이름\n- 성별\n- 희망과목(복수응답)\n- 자유의견\n- 제출일\n- 휴대폰 번호\n"
-        "예시 답변:\n"
-        "{\"이름\":\"name\", \"성별\":\"single_choice\", \"희망과목(복수응답)\":\"multiple_choice\", \"자유의견\":\"text_long\", \"제출일\":\"timestamp\", \"휴대폰 번호\":\"phone\"}\n\n"
-        "이제 아래 설문 컬럼명 리스트를 보고 JSON 형태로만 답하세요."
+        "컬럼: 제출일, 샘플: ['2024-05-23 11:00', '2024-05-23 12:00']\n"
+        "컬럼: 이름, 샘플: ['김영희', '박철수']\n"
+        "컬럼: 희망과목, 샘플: ['국어;영어', '수학']\n"
+        "답변:\n"
+        "{\"제출일\":\"timestamp\", \"이름\":\"name\", \"희망과목\":\"multiple_choice\"}\n\n"
+        "아래 데이터로 동일하게 분류하세요. 답변은 반드시 JSON만!"
+    )
+    usermsg = "\n".join(
+        f"컬럼: {col}, 샘플: {json.dumps(vals, ensure_ascii=False)}"
+        for col, vals in sample_data.items() if vals
     )
     res = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": sysmsg},
-            {"role": "user", "content": prompt}
+            {"role": "user", "content": usermsg}
         ],
         temperature=0,
-        max_tokens=500,
+        max_tokens=900,
     )
     try:
         return json.loads(res.choices[0].message.content)
     except Exception:
         return {}
 
-
+###############################################################################
+#                              GPT 기타 유틸리티                               #
+###############################################################################
 def stream_longtext_summary(texts:str):
     client = get_client()
     if client is None: return
@@ -163,9 +169,6 @@ def stream_longtext_summary(texts:str):
         ):
             delta = chunk.choices[0].delta.content
             if delta: st.write(delta, unsafe_allow_html=True)
-
-def count_tokens(resp):
-    st.session_state.token_used += resp.usage.total_tokens if hasattr(resp,"usage") else 0
 
 ###############################################################################
 #                            기본 분석 함수                                    #
@@ -216,9 +219,6 @@ def plot_clusters(vecs:np.ndarray, texts:list[str]):
 ###############################################################################
 #                            PII 마스킹 (규칙 + GPT)                           #
 ###############################################################################
-def regex_mask(pattern, repl, s):
-    return re.sub(pattern, repl, s) if pd.notna(s) else s
-
 def gpt_mask(texts:list[str]):
     client = get_client()
     if client is None: return texts
@@ -297,14 +297,14 @@ def main():
         st.error(f"CSV 읽기 오류: {e}"); return
     st.session_state.df = df
 
-    # ── GPT 컬럼 타입 제안
+    # ── GPT 컬럼 타입 제안 (샘플값 기반)
     col_types = {}
     type_list = ["timestamp","text_short","text_long","single_choice",
                  "multiple_choice","numeric","email","phone","name",
                  "student_id","other"]
     if openai_key:
         with st.spinner("🧠 GPT가 컬럼 타입 추정 중..."):
-            col_types = gpt_guess_types(df.columns.tolist())
+            col_types = gpt_guess_types_with_sample(df)
 
     left,right = st.columns(2)
     for i,col in enumerate(df.columns):
@@ -410,7 +410,7 @@ def main():
                 st.download_button("📥 보고서 다운로드",report,file_name=f"survey_report_{datetime.now():%Y%m%d_%H%M%S}.txt",mime="text/plain")
         else:                                  # 익명
             anon = df.copy()
-            if openai_key:                         # GPT 마스킹 (간단 샘플)
+            if openai_key:
                 for col,t in cfg.items():
                     if t in {"name","email","phone","student_id"}:
                         batch = anon[col].fillna("").astype(str).tolist()
