@@ -1,4 +1,4 @@
-# Smart Survey Analysis 2.1 – Robust WordCloud Font Handling & GPT
+# Smart Survey Analysis 2.2 – Fix Masking Lambda Syntax Error & Robust WordCloud
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -43,23 +43,43 @@ def check_password():
     if st.button("확인", use_container_width=True):
         if pwd == CORRECT_PASSWORD:
             st.session_state.authenticated = True
-            st.experimental_rerun() if hasattr(st, "experimental_rerun") else st.rerun()
+            (st.experimental_rerun if hasattr(st, "experimental_rerun") else st.rerun)()
         else:
             st.error("비밀번호가 올바르지 않습니다.")
     st.markdown('</div>', unsafe_allow_html=True)
     return False
 
 # ------------------- 마스킹 -------------------------------------------------
-mask_email = lambda e: e if pd.isna(e) else f"{str(e).split('@')[0][:2]}***@{str(e).split('@')[-1]}"
-mask_phone = lambda p: p if pd.isna(p) else f"{re.sub(r'\D','',str(p))[:3]}-****-{re.sub(r'\D','',str(p))[-4:]}"
-mask_name  = lambda n: n if pd.isna(n) else (s:=str(n))[0] + "*"*(len(s)-1)
-mask_sid   = lambda s: s if pd.isna(s) else (st:=str(s)); st[:2]+"*"*(len(st)-4)+st[-2:] if len(st)>4 else s
+
+def mask_email(e):
+    if pd.isna(e):
+        return e
+    local, _, dom = str(e).partition("@")
+    return f"{local[:2]}***@{dom}"
+
+def mask_phone(p):
+    if pd.isna(p):
+        return p
+    digits = re.sub(r"\D", "", str(p))
+    return f"{digits[:3]}-****-{digits[-4:]}" if len(digits) >= 8 else p
+
+def mask_name(n):
+    if pd.isna(n):
+        return n
+    s = str(n)
+    return s[0] + "*" * (len(s) - 1)
+
+def mask_sid(sid):
+    if pd.isna(sid):
+        return sid
+    s = str(sid)
+    return s[:2] + "*" * (len(s) - 4) + s[-2:] if len(s) > 4 else s
 
 # ------------------- 형태소 토크나이저 ------------------------------------
 
-def tokenize_ko(text:str):
+def tokenize_ko(text: str):
     if kiwi:
-        return [t.lemma if t.tag.startswith('V') else t.form for t in kiwi.tokenize(text, normalize_coda=True) if t.tag in POS_KEEP]
+        return [t.lemma if t.tag.startswith("V") else t.form for t in kiwi.tokenize(text, normalize_coda=True) if t.tag in POS_KEEP]
     return re.findall(r"[가-힣]{2,}", text)
 
 # ------------------- 텍스트 분석 -------------------------------------------
@@ -70,15 +90,13 @@ def analyze_text(series: pd.Series):
         return None
     tokens = [w for line in s for w in tokenize_ko(line) if w not in STOPWORDS]
     freq = Counter(tokens)
-    stats = {"total":len(s),"avg":s.str.len().mean(),"min":s.str.len().min(),"max":s.str.len().max()}
-    return {"freq":freq,"stats":stats}
+    stats = {"total": len(s), "avg": s.str.len().mean(), "min": s.str.len().min(), "max": s.str.len().max()}
+    return {"freq": freq, "stats": stats}
 
 # ------------------- WordCloud --------------------------------------------
-# 1) 폰트 경로 탐색: assets/NanumGothic.ttf or repo root
-FONT_PATHS = [Path("assets/NanumGothic.ttf"), Path("NanumGothic.ttf")]
-FONT_PATH = next((str(p) for p in FONT_PATHS if p.exists()), None)
+FONT_PATH = next((str(p) for p in [Path("assets/NanumGothic.ttf"), Path("NanumGothic.ttf")] if p.exists()), None)
 
-def create_wordcloud(freq:dict):
+def create_wordcloud(freq: dict):
     if not freq:
         return None
     wc = WordCloud(font_path=FONT_PATH, background_color="white", width=800, height=400)
@@ -92,7 +110,13 @@ def suggest_longtext(series: pd.Series, n=100):
     if series.dropna().empty or "openai_api_key" not in st.secrets:
         return "(OpenAI API 키 없음 또는 데이터 없음)"
     texts = series.dropna().astype(str).sort_values(key=lambda x: x.str.len(), ascending=False).head(n)
-    prompt = f"""다음은 설문 장문 응답 모음입니다. 주요 주제 3~5개와 각 주제를 대표하는 문장 하나를 추천해 주세요.\n---\n{textwrap.shorten(' \n'.join(texts.tolist()), width=12000)}\n---\n형식: 주제 - 대표 문장"""
+    joined = "\n\n".join(texts.tolist())[:12000]
+    prompt = textwrap.dedent(f"""
+        다음은 설문 장문 응답 모음입니다. 주요 주제 3~5개와 각 주제를 대표하는 문장 하나를 추천해 주세요.
+        ---
+        {joined}
+        ---
+        형식: 주제 - 대표 문장""")
     client = OpenAI(api_key=st.secrets["openai_api_key"])
     res = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role":"user","content":prompt}], max_tokens=400, temperature=0.4)
     return res.choices[0].message.content.strip()
@@ -101,10 +125,11 @@ def suggest_longtext(series: pd.Series, n=100):
 
 def make_report(df, cfg, txt):
     head = f"설문 분석 보고서\n생성: {datetime.now():%Y-%m-%d %H:%M}\n응답: {len(df)}개\n질문: {len(df.columns)}개\n"
-    lines=[head,"텍스트 키워드"]
-    for col,a in txt.items():
+    lines = [head, "텍스트 키워드"]
+    for col, a in txt.items():
         if a:
-            lines.append(f"- {col}: "+", ".join([f"{w}({c})" for w,c in a['freq'].most_common(10)]))
+            words = ", ".join([f"{w}({c})" for w, c in a['freq'].most_common(10)])
+            lines.append(f"- {col}: {words}")
     return "\n".join(lines)
 
 # ------------------- 메인 ---------------------------------------------------
@@ -124,23 +149,28 @@ def main():
     st.session_state.df = df
     st.dataframe(df.head())
 
-    # --- 컬럼 타입 설정 ----------------------------------------------------
-    cfg={}
-    left,right=st.columns(2)
-    opts=["timestamp","text_short","text_long","single_choice","multiple_choice","linear_scale","numeric","email","phone","name","student_id","other"]
-    for i,col in enumerate(df.columns):
-        with (left if i%2==0 else right): cfg[col]=st.selectbox(col,opts,key=f"sel_{col}")
-    st.session_state.column_configs=cfg
+    # 컬럼 타입 설정
+    cfg = {}
+    left, right = st.columns(2)
+    opts = ["timestamp","text_short","text_long","single_choice","multiple_choice","linear_scale","numeric","email","phone","name","student_id","other"]
+    for i, col in enumerate(df.columns):
+        with (left if i % 2 == 0 else right):
+            cfg[col] = st.selectbox(col, opts, key=f"sel_{col}")
+    st.session_state.column_configs = cfg
 
     if not st.button("🚀 분석", use_container_width=True):
         return
 
-    txt_res={c:analyze_text(df[c]) for c,t in cfg.items() if t in {"text_short","text_long"}}
+    txt_res = {c: analyze_text(df[c]) for c, t in cfg.items() if t in {"text_short", "text_long"}}
 
-    tab_all,tab_txt,tab_exp=st.tabs(["📊 개요","🔍 텍스트","📥 내보내기"])
-    with tab_all:
-        st.metric("응답 수",len(df)); rate=(df.notna().sum().sum()/(len(df)*len(df.columns)))*100; st.metric("평균 응답률",f"{rate:.1f}%")
-        resp=(df.notna().sum()/len(df)*100).sort_values(); st.plotly_chart(px.bar(x=resp.values,y=resp.index,orientation="h"),use_container_width=True)
+    tab_over, tab_txt, tab_exp = st.tabs(["📊 개요", "🔍 텍스트", "📥 내보내기"])
+
+    with tab_over:
+        st.metric("응답 수", len(df))
+        rate = (df.notna().sum().sum() / (len(df) * len(df.columns))) * 100
+        st.metric("평균 응답률", f"{rate:.1f}%")
+        resp = (df.notna().sum() / len(df) * 100).sort_values()
+        st.plotly_chart(px.bar(x=resp.values, y=resp.index, orientation="h"), use_container_width=True)
     with tab_txt:
         for col,res in txt_res.items():
             st.subheader(col)
