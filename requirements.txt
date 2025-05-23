@@ -2,3 +2,4 @@ plotly
 kiwipiepy
 koreanize-matplotlib
 wordcloud 
+openai 
