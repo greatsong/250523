@@ -310,7 +310,7 @@ def main():
         return
     
     # 헤더
-    st.markdown('<h1 class="main-header">📊 스마트 설문 분석 시스템</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📊 스마트 설문 분석 시스템(by zzolab 석리송)</h1>', unsafe_allow_html=True)
     st.markdown('<p style="text-align: center; color: #718096; margin-bottom: 2rem;">Google Forms CSV 데이터를 업로드하고 각 컬럼 타입을 설정하면 자동으로 분석합니다</p>', unsafe_allow_html=True)
     
     # 파일 업로드
