@@ -71,6 +71,7 @@ def wc_b64(text: str, w: int, h: int) -> str:
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
+
 def tokenize(text:str):
     """한글 2글자 이상 토큰 추출"""
     return TOK_RGX.findall(text)
