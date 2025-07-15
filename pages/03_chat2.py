@@ -61,7 +61,14 @@ def detect_choice(series:pd.Series)->str:
 def simple_tok(t): return TOKEN_RGX.findall(t)
 def freq(tokens,n=20): return Counter([x for x in tokens if x not in STOP]).most_common(n)
 def wc_base64(text,w=600,h=300):
-    wc=WordCloud(font_path=FONT_PATH,bg_color="white",width=w,height=h,max_words=100).generate(text)
+
+    # ── 수정 후 ───────────────────────────────────────
+    wc = WordCloud(
+        font_path=FONT_PATH, background_color="white",  # ← 올바른 이름
+        width=w, height=h, max_words=100
+    ).generate(text)
+
+ 
     fig,_=plt.subplots(figsize=(w/100,h/100)); plt.imshow(wc); plt.axis("off")
     buf=io.BytesIO(); fig.savefig(buf,format="png",bbox_inches="tight"); plt.close(fig)
     return "data:image/png;base64,"+base64.b64encode(buf.getvalue()).decode()
