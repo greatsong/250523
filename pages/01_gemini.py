@@ -310,22 +310,31 @@ def main():
     st.markdown('<p style="text-align: center; color: #718096; margin-bottom: 2rem;">CSV 데이터를 업로드하고 AI의 힘으로 설문 결과를 심층 분석하세요.</p>', unsafe_allow_html=True)
 
     if not OPENAI_API_ENABLED:
-        st.warning("⚠️ OpenAI API 키가 설정되지 않았습니다. AI 관련 기능(타입 추천, 텍스트 심층 분석, AI 보고서)이 비활성화됩니다. Streamlit Cloud의 'Secrets'에 `OPENAI_API_KEY`를 설정해주세요.", icon="🤖")
+        st.warning("⚠️ OpenAI API 키가 설정되지 않았습니다. AI 관련 기능이 비활성화됩니다. Streamlit Cloud의 'Secrets'에 `OPENAI_API_KEY`를 설정해주세요.", icon="🤖")
 
     uploaded_file = st.file_uploader("CSV 파일을 업로드하세요", type=['csv'], help="Google Forms에서 다운로드한 CSV 파일을 업로드해주세요")
 
     if uploaded_file is not None:
         try:
             df = pd.read_csv(uploaded_file, encoding='utf-8')
-            if 'df' not in st.session_state or not st.session_state.df.equals(df):
+            previous_df = st.session_state.get('df', None)
+            
+            # 이전 df가 없거나, 새로 업로드된 파일과 내용이 다를 경우 상태 초기화
+            if previous_df is None or not previous_df.equals(df):
                 st.session_state.df = df
-                st.session_state.column_configs = {} # 새 파일 업로드 시 설정 초기화
-                st.session_state.text_analyses = {} # 분석 결과도 초기화
+                st.session_state.column_configs = {}
+                st.session_state.text_analyses = {}
+                st.session_state.analysis_requested = False
                 st.success(f"✅ 파일이 성공적으로 업로드되었습니다! (총 {len(df)}개 응답)")
+                st.rerun()
+
         except Exception as e:
             st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
+            st.session_state.df = None
             return
-        
+
+    # 세션에 유효한 DataFrame이 있을 때만 나머지 UI를 표시
+    if st.session_state.get('df') is not None:
         df = st.session_state.df
         
         with st.expander("📋 데이터 미리보기"):
@@ -336,14 +345,14 @@ def main():
 
         if OPENAI_API_ENABLED:
             if st.button("🤖 AI로 모든 컬럼 타입 자동 추천", help="AI가 컬럼명과 데이터를 보고 가장 적합한 타입을 추천합니다."):
-                recommended_types = recommend_column_types(df)
+                with st.spinner("🤖 AI가 컬럼 타입을 추천하고 있습니다..."):
+                    recommended_types = recommend_column_types(df)
                 st.session_state.column_configs.update(recommended_types)
                 st.rerun()
         
         col_list = df.columns.tolist()
         num_cols = 2
         col_chunks = [col_list[i:i + num_cols] for i in range(0, len(col_list), num_cols)]
-
         current_configs = st.session_state.get('column_configs', {})
         
         for chunk in col_chunks:
@@ -358,8 +367,6 @@ def main():
                             st.caption(f"예시: {sample_text}...")
 
                         options_list = list(COLUMN_TYPES.keys())
-                        
-                        # 추천된 값이나 기존 설정값을 기본값으로 설정
                         default_index = 0
                         if column in current_configs:
                             default_index = options_list.index(current_configs[column])
@@ -376,8 +383,8 @@ def main():
         
         st.divider()
         if st.button("🚀 분석 시작", use_container_width=True, type="primary"):
-            # 분석 탭으로 넘어가기 위해 상태 저장
             st.session_state.analysis_requested = True
+            st.rerun()
 
         if st.session_state.get('analysis_requested', False):
             analyze_survey_data(st.session_state.df, st.session_state.column_configs)
