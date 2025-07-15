@@ -107,8 +107,14 @@ elif page=="통계":
     # Heatmap
     ts_cols=[c for c,t in cfg.items() if t=="timestamp"]
     if ts_cols:
-        heat=ts_heat(df[ts_cols[0]]).reset_index(name="count")
-        heat[['date','hour']]=heat['index'].astype(str).str.split(' ',expand=True)
+
+        # ─── 수정 후 ───
+        heat = ts_heat(df[ts_cols[0]]).reset_index()        # 0: period, 1: count
+        heat.columns = ['period', 'count']                  # ← 명시적으로 지정
+        heat[['date','hour']] = heat['period'].astype(str).str.split(' ', expand=True)
+        heat['hour'] = heat['hour'].str[:2]
+        pivot = heat.pivot(index='date', columns='hour', values='count').fillna(0)
+
         heat['hour']=heat['hour'].str[:2]
         pv=heat.pivot(index='date',columns='hour',values='count').fillna(0)
         st.plotly_chart(koreanize(px.imshow(pv,labels={'x':'시간','y':'날짜','color':'응답'})),
