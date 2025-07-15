@@ -1,11 +1,12 @@
 """
-AI 설문 대시보드  (2025‑07‑15 Stable)
+AI 설문 대시보드  (2025‑07‑15 Stable v2)
 ──────────────────────────────────────────────
-- 기본 CSV 자동 로드
+- 자동 CSV 로드
 - 컬럼명 정규화 → KeyError 방지
 - 자동 타입 추론 + 사용자 수정
-- 다중 선택 Top‑10 + 기타 (append → concat 수정)
-- WordCloud 크기 슬라이더
+- 다중 선택 Top‑10 + 기타 (pd.concat)
+- WordCloud 크기 슬라이더, 민감 컬럼 제외
+- tokenize 함수 정의 + 콤마 분리 처리  ← NEW
 """
 
 # ─ Imports
@@ -19,8 +20,7 @@ def get_font():
     for p in ["/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
               "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"]:
         if os.path.exists(p): return p
-    url=("https://raw.githubusercontent.com/google/fonts/main/"
-         "ofl/nanumgothic/NanumGothic-Regular.ttf")
+    url=("https://raw.githubusercontent.com/google/fonts/main/ofl/nanumgothic/NanumGothic-Regular.ttf")
     tmp=pathlib.Path(tempfile.gettempdir())/"NanumGothic.ttf"
     if not tmp.exists(): urllib.request.urlretrieve(url,tmp)
     return str(tmp)
@@ -35,11 +35,11 @@ COLUMN_TYPES={"timestamp":"타임","email":"이메일","phone":"전화","name":"
     "student_id":"학번","numeric":"숫자","single_choice":"단일선택","multiple_choice":"다중선택",
     "linear_scale":"척도","text_short":"단답","text_long":"장문","url":"URL","other":"기타"}
 SENSITIVE_TYPES={"email","phone","student_id","url","name"}
-SEP=r"[;,／|]"
+SEP=r"[;,／|]"                 # 다중 선택 구분
 TOK_RGX=re.compile(r"[가-힣]{2,}")
 STOP={'은','는','이','가','을','를','의','에','와','과'}
 
-# ─ Utils
+# ─ Utils ------------------------------------------------
 def normalize(col:str)->str:
     col=unicodedata.normalize("NFKC",col)
     col=re.sub(r"\s*\(.*?\)\s*$","",col)
@@ -58,6 +58,10 @@ def wc_b64(text,w,h):
     buf=io.BytesIO(); plt.imshow(wc); plt.axis("off"); plt.tight_layout(pad=0)
     plt.savefig(buf,format="png",bbox_inches="tight"); plt.close()
     return "data:image/png;base64,"+base64.b64encode(buf.getvalue()).decode()
+
+def tokenize(text:str):
+    """한글 2글자 이상 토큰 추출"""
+    return TOK_RGX.findall(text)
 
 # ─ Streamlit UI
 st.set_page_config("AI 설문 대시보드","🤖",layout="wide")
@@ -101,7 +105,8 @@ with st.expander("🗂 타입 확인·수정",False):
             cur=cfg.get(col,"other")
             cfg[col]=st.selectbox(col,list(COLUMN_TYPES),
                                   index=list(COLUMN_TYPES).index(cur),
-                                  format_func=lambda x:COLUMN_TYPES[x],key=f"type_{col}")
+                                  format_func=lambda x:COLUMN_TYPES[x],
+                                  key=f"type_{col}")
 
 page=st.radio("메뉴",["개요","통계","텍스트"],horizontal=True)
 
@@ -133,7 +138,7 @@ elif page=="통계":
             if len(cnt)>10:
                 top10=cnt.head(10); others=cnt.iloc[10:].sum()
                 cnt_bar=top10
-                cnt_pie=pd.concat([top10,pd.Series({"기타":others})])  # ← append→concat
+                cnt_pie=pd.concat([top10,pd.Series({"기타":others})])
             else:
                 cnt_bar=cnt_pie=cnt
             c1,c2=st.columns(2)
@@ -152,12 +157,19 @@ else:
         if col not in df.columns: continue
         if t not in {"text_short","text_long"} or t in SENSITIVE_TYPES: continue
         st.markdown(f"##### {col}")
-        txt=[str(x) for x in df[col].dropna() if str(x).strip()]
-        if not txt: st.info("응답 없음"); continue
-        tokens=[z for tx in txt for z in tokenize(tx)]
+        texts=[str(x) for x in df[col].dropna() if str(x).strip()]
+        if not texts:
+            st.info("응답 없음"); continue
+
+        # 콤마·공백으로 먼저 분리 후 토큰화
+        tokens=[]
+        for line in texts:
+            for part in re.split(r"[,\s]+", line):
+                tokens.extend(tokenize(part))
+
         top=Counter([x for x in tokens if x not in STOP]).most_common(20)
         if top:
-            w,c=zip(*top)
-            st.plotly_chart(kplt(px.bar(x=c,y=w,orientation="h")),use_container_width=True)
+            words,counts=zip(*top)
+            st.plotly_chart(kplt(px.bar(x=counts,y=words,orientation="h")),use_container_width=True)
             st.image(wc_b64(' '.join(tokens),wc_w,wc_h),use_container_width=True)
         st.divider()
