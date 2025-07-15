@@ -184,5 +184,5 @@ else:
         if top:
             words,counts=zip(*top)
             st.plotly_chart(kplt(px.bar(x=counts,y=words,orientation="h")),use_container_width=True)
-            st.image(wc_b64(' '.join(tokens),wc_w,wc_h),use_container_width=True)
+            st.image(wc_b64(' '.join(tokens), wc_w, wc_h, dpi=300),   use_container_width=True)
         st.divider()
