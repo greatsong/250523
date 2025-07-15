@@ -103,10 +103,13 @@ class AIAnalyzer:
         
         for col in df.columns:
             samples = df[col].dropna().head(5).tolist()
+            # numpy/pandas 타입을 Python 기본 타입으로 변환
+            samples = [str(sample) for sample in samples]
+            
             column_samples[col] = {
                 "samples": samples,
-                "unique_count": df[col].nunique(),
-                "null_count": df[col].isnull().sum()
+                "unique_count": int(df[col].nunique()),
+                "null_count": int(df[col].isnull().sum())
             }
         
         prompt = f"""
