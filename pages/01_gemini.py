@@ -21,7 +21,7 @@ st.set_page_config(
 # Streamlit Cloud 배포 시, st.secrets를 통해 API 키를 안전하게 관리합니다.
 # 로컬 테스트 시에는 아래 주석을 풀고 직접 키를 입력하거나 환경 변수를 사용하세요.
 try:
-    openai.api_key = st.secrets["OPENAI_API_KEY"]
+    openai.api_key = st.secrets["openai_api_key"]
     OPENAI_API_ENABLED = True
 except (KeyError, FileNotFoundError):
     OPENAI_API_ENABLED = False
