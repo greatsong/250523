@@ -89,9 +89,9 @@ st.markdown(
 
 with st.sidebar:
     auto = st.checkbox("⚙️ 자동 타입 추론", True)
-    wc_w = st.slider("WordCloud 폭(px)", 400, 1000, 600, 50)
-    wc_h = st.slider("WordCloud 높이(px)", 200, 600, 300, 50)
-    wc_dpi = st.slider("WordCloud DPI", 100, 400, 300, 50)
+    wc_w = st.slider("WordCloud 폭(px)", 1000, 600,  400)
+    wc_h = st.slider("WordCloud 높이(px)", 600, 300, 200)
+    wc_dpi = st.slider("WordCloud DPI", 400, 300, 200, 100)
 
 file = st.file_uploader("📂 CSV 업로드", type="csv")
 if file is None:
