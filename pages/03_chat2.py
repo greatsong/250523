@@ -53,11 +53,23 @@ def detect_choice(s:pd.Series)->str:
     if s.nunique()<max(20,len(s)*0.5): return "single_choice"
     return "other"
 
-def wc_b64(text,w,h):
-    wc=WordCloud(font_path=FONT,background_color="white",width=w,height=h,max_words=100).generate(text)
-    buf=io.BytesIO(); plt.imshow(wc); plt.axis("off"); plt.tight_layout(pad=0)
-    plt.savefig(buf,format="png",bbox_inches="tight"); plt.close()
-    return "data:image/png;base64,"+base64.b64encode(buf.getvalue()).decode()
+def wc_b64(text: str, w: int, h: int) -> str:
+    wc = WordCloud(
+        font_path=FONT_PATH,
+        background_color="white",
+        width=w, height=h, max_words=100
+    ).generate(text)
+
+    buf = io.BytesIO()
+    plt.figure(figsize=(w / 100, h / 100), dpi=300)   # ← dpi 300 (기존 100)
+    plt.imshow(wc)
+    plt.axis("off")
+    plt.tight_layout(pad=0)
+    plt.savefig(buf, format="png", bbox_inches="tight", dpi=300)  # ← dpi 300
+    plt.close()
+
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
 
 def tokenize(text:str):
     """한글 2글자 이상 토큰 추출"""
