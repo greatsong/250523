@@ -440,12 +440,12 @@ def analyze_survey(df: pd.DataFrame, column_configs: Dict[str, str], api_key: st
     # AI 분석기 초기화
     ai_analyzer = AIAnalyzer(api_key) if api_key else None
     
-    # 기본 통계
-    df_stats = {
-        'total_responses': len(df),
-        'question_count': len(df.columns),
-        'completion_rate': (df.notna().sum().sum() / (len(df) * len(df.columns))) * 100
-    }
+            # 기본 통계
+            df_stats = {
+                'total_responses': len(df),
+                'question_count': len(df.columns),
+                'completion_rate': float((df.notna().sum().sum() / (len(df) * len(df.columns))) * 100)
+            }
     
     with tabs[0]:  # 개요
         st.markdown('<h2 class="section-header">📊 전체 개요</h2>', unsafe_allow_html=True)
@@ -487,7 +487,7 @@ def analyze_survey(df: pd.DataFrame, column_configs: Dict[str, str], api_key: st
             color_continuous_scale='viridis'
         )
         fig.update_layout(height=max(400, len(response_rates) * 25))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="response_rates_chart")
     
     with tabs[1]:  # 통계 분석
         st.markdown('<h2 class="section-header">📈 통계 분석</h2>', unsafe_allow_html=True)
@@ -790,10 +790,20 @@ def generate_report(df, column_configs, df_stats, ai_analyses, report_type, mask
 - 전체 응답 수: {df_stats['total_responses']}개
 - 질문 수: {df_stats['question_count']}개
 - 평균 완료율: {df_stats['completion_rate']:.1f}%
-- 수집 기간: {df.iloc[0, 0]} ~ {df.iloc[-1, 0]}
-
-2. 컬럼 구성
-{'='*60}
+"""
+    
+    # 타임스탬프 컬럼이 있으면 수집 기간 표시
+    timestamp_cols = [col for col, typ in column_configs.items() if typ == 'timestamp']
+    if timestamp_cols and len(df) > 0:
+        ts_col = timestamp_cols[0]
+        try:
+            start_date = df[ts_col].dropna().iloc[0]
+            end_date = df[ts_col].dropna().iloc[-1]
+            report += f"- 수집 기간: {start_date} ~ {end_date}\n"
+        except:
+            pass
+    
+    report += f"\n2. 컬럼 구성\n{'='*60}\n"
 """
     
     # 컬럼 타입별 개수
@@ -866,8 +876,13 @@ def generate_report(df, column_configs, df_stats, ai_analyses, report_type, mask
         if text_cols:
             report += f"\n텍스트 응답 질문 ({len(text_cols)}개):\n"
             for col in text_cols:
-                avg_length = df[col].str.len().mean()
-                report += f"- {col}: 평균 {avg_length:.0f}자\n"
+                try:
+                    text_lengths = df[col].dropna().str.len()
+                    if len(text_lengths) > 0:
+                        avg_length = text_lengths.mean()
+                        report += f"- {col}: 평균 {avg_length:.0f}자\n"
+                except:
+                    report += f"- {col}: 길이 계산 불가\n"
     
     report += f"\n{'='*60}\n보고서 끝\n{'='*60}\n"
     
