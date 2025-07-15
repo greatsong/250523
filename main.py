@@ -1,6 +1,6 @@
 """
-AI 설문 대시보드  (2025‑07‑15 Stable v3)
-──────────────────────────────────────────────
+🎉🤖 AI와 함께하는 고품격 구글 설문 분석! ✨📊 (by 석리송) 🎉
+────────────────────────────────────────────────────────────
 ● 업로드 없으면 기본 CSV 자동 로드
 ● 컬럼명 정규화 → KeyError 방지
 ● 자동 타입 추론 + 사용자 수정 UI
@@ -74,7 +74,18 @@ def wc_b64(text:str, w:int, h:int, dpi:int=300) -> str:
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 # ──────────── Streamlit UI ────────────
-st.set_page_config("AI 설문 대시보드", "🤖", layout="wide")
+st.set_page_config("AI와 함께하는 고품격 구글 설문 분석!", "🤖", layout="wide")
+
+# 🔥 센스 넘치는 메인 타이틀 & 이모지 폭발!
+st.markdown(
+    """
+    <h1 style='text-align:center'>
+    🎉🤖 <strong>AI와 함께하는 고품격 구글 설문 분석!</strong> ✨📊<br>
+    <span style='font-size:0.8em'>(by <strong>석리송</strong>)</span> 📝🚀🧠💡
+    </h1>
+    """,
+    unsafe_allow_html=True
+)
 
 with st.sidebar:
     auto = st.checkbox("⚙️ 자동 타입 추론", True)
@@ -82,14 +93,14 @@ with st.sidebar:
     wc_h = st.slider("WordCloud 높이(px)", 200, 600, 300, 50)
     wc_dpi = st.slider("WordCloud DPI", 100, 400, 300, 50)
 
-file = st.file_uploader("CSV 업로드", type="csv")
+file = st.file_uploader("📂 CSV 업로드", type="csv")
 if file is None:
     default = pathlib.Path("나에 대해 키워드를 중심으로 설명해주세요!(응답)의 사본.csv")
     if default.exists():
         file = open(default, "rb")
-        st.info(f"📂 기본 '{default.name}' 로드")
+        st.info(f"🔄 기본 '{default.name}' 로드")
     else:
-        st.warning("CSV 업로드 필요"); st.stop()
+        st.warning("⚠️ CSV 업로드 필요"); st.stop()
 
 df = pd.read_csv(file)
 df.columns = [normalize(c) for c in df.columns]
@@ -127,12 +138,12 @@ with st.expander("🗂 타입 확인·수정", False):
             )
 
 # ───────── Navigation ─────────
-page = st.radio("메뉴", ["개요", "통계", "텍스트"], horizontal=True)
+page = st.radio("📑 메뉴", ["개요", "통계", "텍스트"], horizontal=True)
 
 # ───────── 1. 개요 ─────────
 if page == "개요":
     st.subheader("📊 전체 개요")
-    st.metric("응답", len(df)); st.metric("문항", len(df.columns))
+    st.metric("응답 수", len(df)); st.metric("문항 수", len(df.columns))
     compl = (df.notna().sum().sum()) / (len(df) * len(df.columns)) * 100
     st.metric("완료율", f"{compl:.1f}%")
     resp = (df.notna().sum() / len(df) * 100).sort_values()
@@ -147,7 +158,7 @@ elif page == "통계":
     for col, t in cfg.items():
         if col not in df.columns: continue
         if t not in {"single_choice","multiple_choice","linear_scale","numeric"}: continue
-        st.markdown(f"#### {col} ({COLUMN_TYPES[t]})")
+        st.markdown(f"#### 🏷️ {col} ({COLUMN_TYPES[t]})")
         s = df[col].dropna().astype(str)
         if t == "multiple_choice":
             s = s.str.split(SEP, expand=True).stack().str.strip()
@@ -183,10 +194,10 @@ else:
     for col, t in cfg.items():
         if col not in df.columns: continue
         if t not in {"text_short","text_long"} or t in SENSITIVE_TYPES: continue
-        st.markdown(f"##### {col}")
+        st.markdown(f"##### 🔍 {col}")
         texts = [str(x) for x in df[col].dropna() if str(x).strip()]
         if not texts:
-            st.info("응답 없음"); continue
+            st.info("🙈 응답 없음"); continue
 
         # 콤마·공백 분리 후 토큰화
         tokens = []
