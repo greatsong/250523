@@ -146,7 +146,7 @@ def freq_top(tokens:List[str],n:int=20):
 
 def find_korean_font():
     for p in [
-        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        "NanumGothic.ttf",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
     ]:
