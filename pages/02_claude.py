@@ -338,15 +338,20 @@ def main():
     with st.sidebar:
         st.markdown("### ⚙️ 설정")
         
-        # OpenAI API 키 (Streamlit Secrets 우선, 없으면 입력받기)
-        api_key = st.secrets.get("OPENAI_API_KEY", "")
-        if not api_key:
-            api_key = st.text_input("OpenAI API Key", type="password", help="sk-로 시작하는 API 키를 입력하세요")
+        # OpenAI API 키 (Streamlit Secrets 우선 - 소문자 openai_api_key 확인)
+        api_key = st.secrets.get("openai_api_key", "")
         
+        # Secrets에 키가 있으면 그것을 사용
         if api_key:
-            st.success("✅ API 키 설정됨")
+            st.success("✅ API 키가 Secrets에서 로드됨")
         else:
-            st.warning("⚠️ AI 기능을 사용하려면 API 키가 필요합니다")
+            # Secrets에 없으면 사용자 입력받기
+            api_key = st.text_input("OpenAI API Key", type="password", help="sk-로 시작하는 API 키를 입력하세요")
+            
+            if api_key:
+                st.success("✅ API 키 설정됨")
+            else:
+                st.warning("⚠️ AI 기능을 사용하려면 API 키가 필요합니다")
         
         st.markdown("---")
         
